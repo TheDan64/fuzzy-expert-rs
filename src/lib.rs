@@ -1,35 +1,57 @@
 use std::collections::HashMap;
 use std::ops::Range;
-use std::sync::Arc;
+
+use slotmap::{DefaultKey, SlotMap};
 
 mod dsl;
 
 use dsl::Expr;
 
+// TODO: FuzzyKey
+
 /// A value between zero and one
-struct ZeroOne(f32);
+pub struct ZeroOne(f32);
 
-#[derive(Clone)]
-struct Variable(Arc<VariableInner>);
+pub struct Variables(SlotMap<DefaultKey, Variable>);
 
-impl Variable {
-    pub fn new(
+impl Variables {
+    pub fn new() -> Self {
+        Self(SlotMap::new())
+    }
+
+    pub fn add(
+        &mut self,
         universe_range: Range<f32>,
         terms: HashMap<&'static str, Vec<(f32, f32)>>,
         certainty_factor: impl Into<Option<ZeroOne>>,
-    ) -> Self {
-        Self(Arc::new(VariableInner {
+    ) -> DefaultKey {
+        self.0.insert(Variable {
             universe_range,
             terms,
             certainty_factor: certainty_factor.into().unwrap_or(ZeroOne(1.)),
-        }))
+        })
     }
 }
 
-struct VariableInner {
+struct Variable {
     universe_range: Range<f32>,
     terms: HashMap<&'static str, Vec<(f32, f32)>>,
     certainty_factor: ZeroOne,
+}
+
+pub struct Rules(Vec<Rule>);
+
+impl Rules {
+    pub fn new() -> Self {
+        Rules(Vec::new())
+    }
+
+    pub fn add(&mut self, premise: Expr) {
+        self.0.push(Rule {
+            premise,
+            consequence: (),
+        });
+    }
 }
 
 struct Rule {
@@ -37,12 +59,12 @@ struct Rule {
     consequence: (),
 }
 
-fn run(rules: &[Rule], input: &[()]) {}
+fn eval(vars: &Variables, rules: &Rules, input: &[()]) {}
 
 #[test]
 fn test_bank_loan() {
     macro_rules! map(
-        { $($key:expr => $value:expr,)+ } => {
+        ($($key:expr => $value:expr,)+) => {
             {
                 let mut m = ::std::collections::HashMap::with_capacity([$($key,)+].len());
                 $(
@@ -65,27 +87,21 @@ fn test_bank_loan() {
         "Goodc" => vec![(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
         "Badc" => vec![(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)],
     };
-    let score = Variable::new(150. ..200., score_terms, ZeroOne(1.));
-    let ratio = Variable::new(0.1..1., ratio_terms, ZeroOne(1.));
-    let credit = Variable::new(0. ..10., credit_terms, ZeroOne(1.));
-    // let vars: HashMap<_, _> = [("score", score), ("ratio", ratio), ("credit", credit)]
-    //     .into_iter()
-    //     .collect();
-    let rule1 = Rule {
-        premise: Expr::And(vec![
-            Expr::Eq(score.clone(), "High"),
-            Expr::Eq(ratio.clone(), "Goodr"),
-            Expr::Eq(credit.clone(), "Goodc"),
-        ]),
-        consequence: (),
-    };
-    let rule2 = Rule {
-        premise: Expr::And(vec![
-            Expr::Eq(score, "Low"),
-            Expr::Or(vec![Expr::Eq(ratio, "Badr"), Expr::Eq(credit, "Badc")]),
-        ]),
-        consequence: (),
-    };
+    let mut vars = Variables::new();
+    let score = vars.add(150. ..200., score_terms, ZeroOne(1.));
+    let ratio = vars.add(0.1..1., ratio_terms, ZeroOne(1.));
+    let credit = vars.add(0. ..10., credit_terms, ZeroOne(1.));
+    let mut rules = Rules::new();
 
-    run(&[rule1, rule2], &[]);
+    rules.add(Expr::And(vec![
+        Expr::Eq(score, "High"),
+        Expr::Eq(ratio, "Goodr"),
+        Expr::Eq(credit, "Goodc"),
+    ]));
+    rules.add(Expr::And(vec![
+        Expr::Eq(score, "Low"),
+        Expr::Or(vec![Expr::Eq(ratio, "Badr"), Expr::Eq(credit, "Badc")]),
+    ]));
+
+    eval(&vars, &rules, &[]);
 }

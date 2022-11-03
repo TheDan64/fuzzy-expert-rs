@@ -1,7 +1,8 @@
-use crate::Variable;
+use slotmap::DefaultKey;
 
-pub(crate) enum Expr {
-    Eq(Variable, &'static str),
+pub enum Expr {
+    // REVIEW: Maybe fixed_map crate for RHS? Could be Key or Value? Or Just an enum?
+    Eq(DefaultKey, &'static str),
     And(Vec<Expr>),
     Or(Vec<Expr>),
 }
