@@ -1,4 +1,4 @@
-use crate::{Terms, Variable, VariableKey};
+use crate::{Variable, VariableKey};
 
 pub enum Expr<T> {
     Eq(VariableKey, T),

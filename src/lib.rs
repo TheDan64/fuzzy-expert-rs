@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::ops::{Range, RangeBounds};
+use std::ops::{Bound, Range, RangeBounds};
 
 use slotmap::{new_key_type, SlotMap};
 
@@ -25,6 +26,7 @@ impl<I> Clone for Variable<I> {
 
 impl<I> Copy for Variable<I> {}
 
+// REVIEW: Is this really only input variables?
 #[derive(Default)]
 pub struct Variables<T>(SlotMap<VariableKey, VariableContraints>, PhantomData<T>);
 
@@ -35,11 +37,11 @@ impl<T: Terms> Variables<T> {
 
     pub fn add<I: Into<T>>(
         &mut self,
-        universe: Range<f32>,
+        bounds: impl RangeBounds<f32>,
         certainty_factor: impl Into<Option<ZeroOne>>,
     ) -> Variable<I> {
         let key = self.0.insert(VariableContraints {
-            universe,
+            universe: (bounds.start_bound().cloned(), bounds.end_bound().cloned()),
             certainty_factor: certainty_factor.into().unwrap_or(ZeroOne(1.)),
         });
 
@@ -48,36 +50,59 @@ impl<T: Terms> Variables<T> {
 }
 
 struct VariableContraints {
-    universe: Range<f32>,
+    universe: (Bound<f32>, Bound<f32>),
     certainty_factor: ZeroOne,
 }
 
 #[derive(Default)]
-pub struct Rules<T>(Vec<Rule<T>>);
+pub struct Rules<T, O>(Vec<Rule<T, O>>);
 
-impl<T: Terms> Rules<T> {
+impl<T: Terms, O> Rules<T, O> {
     pub fn new() -> Self {
         Rules(Vec::new())
     }
 
-    pub fn add(&mut self, premise: Expr<T>) {
+    pub fn add(&mut self, premise: Expr<T>, consequence: O)
+    where
+        O: Into<T>,
+    {
         self.0.push(Rule {
             premise,
-            consequence: (),
+            consequence,
         });
     }
 }
 
-struct Rule<T> {
+struct Rule<T, O> {
     premise: Expr<T>,
-    consequence: (),
+    consequence: O,
 }
 
 pub trait Terms {
     fn values(&self) -> &'static [(f32, f32)];
 }
 
-fn eval<T: Terms>(vars: &Variables<T>, rules: &Rules<T>, input: &[()]) {}
+#[derive(Default)]
+pub struct Inputs(HashMap<VariableKey, f32>);
+
+impl Inputs {
+    pub fn new() -> Self {
+        Inputs(HashMap::new())
+    }
+
+    pub fn add<I>(&mut self, var: Variable<I>, val: f32) {
+        self.0.insert(var.0, val);
+    }
+}
+
+fn eval<'r, T: Terms, O: Into<T>>(
+    vars: &Variables<T>,
+    rules: &'r Rules<T, O>,
+    inputs: &Inputs,
+) -> &'r O {
+    // Placeholder
+    &rules.0[0].consequence
+}
 
 #[test]
 fn test_bank_loan() {
@@ -96,10 +121,22 @@ fn test_bank_loan() {
         Bad,
     }
 
+    enum Decision {
+        Approve,
+        Reject,
+    }
+
     enum VarTerms {
         Score(Score),
         Ratio(Ratio),
         Credit(Credit),
+        Decision(Decision),
+    }
+
+    impl From<Decision> for VarTerms {
+        fn from(d: Decision) -> Self {
+            Self::Decision(d)
+        }
     }
 
     impl From<Score> for VarTerms {
@@ -135,26 +172,37 @@ fn test_bank_loan() {
                 Self::Ratio(Ratio::Bad) => &[(0.44, 0.), (0.45, 0.3), (0.5, 0.7), (0.7, 1.)],
                 Self::Credit(Credit::Good) => &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
                 Self::Credit(Credit::Bad) => &[(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)],
+                Self::Decision(Decision::Approve) => &[(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)],
+                Self::Decision(Decision::Reject) => &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
             }
         }
     }
 
     let mut vars = Variables::<VarTerms>::new();
-    let score = vars.add::<Score>(150. ..200., ZeroOne(1.));
-    let ratio = vars.add::<Ratio>(0.1..1., ZeroOne(1.));
-    let credit = vars.add::<Credit>(0. ..10., ZeroOne(1.));
+    let score = vars.add::<Score>(150. ..=200., ZeroOne(1.));
+    let ratio = vars.add::<Ratio>(0.1..=1., ZeroOne(1.));
+    let credit = vars.add::<Credit>(0. ..=10., ZeroOne(1.));
+    // let decision = vars.add::<Decision>(0. ..=10., ZeroOne(1.));
     let mut rules = Rules::new();
 
     rules.add(
         score
             .eq(Score::High)
             .and2(ratio.eq(Ratio::Good), credit.eq(Credit::Good)),
+        Decision::Approve,
     );
     rules.add(
         score
             .eq(Score::Low)
             .and(ratio.eq(Ratio::Bad).or(credit.eq(Credit::Bad))),
+        Decision::Reject,
     );
 
-    eval(&vars, &rules, &[]);
+    let mut inputs = Inputs::new();
+
+    inputs.add(score, 190.);
+    inputs.add(ratio, 0.39);
+    inputs.add(credit, 1.5);
+
+    eval(&vars, &rules, &inputs);
 }
