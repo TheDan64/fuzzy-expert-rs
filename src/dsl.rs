@@ -1,7 +1,7 @@
-use crate::Variable;
+use crate::{Terms, Variable, VariableKey};
 
 pub enum Expr<T> {
-    Eq(Variable, T),
+    Eq(VariableKey, T),
     And(Vec<Expr<T>>),
     Or(Vec<Expr<T>>),
 }
@@ -20,8 +20,11 @@ impl<T> Expr<T> {
     }
 }
 
-impl Variable {
-    pub fn eq<T>(self, rhs: impl Into<T>) -> Expr<T> {
-        Expr::Eq(self, rhs.into())
+impl<I> Variable<I> {
+    pub fn eq<T>(self, rhs: I) -> Expr<T>
+    where
+        I: Into<T>,
+    {
+        Expr::Eq(self.0, rhs.into())
     }
 }
