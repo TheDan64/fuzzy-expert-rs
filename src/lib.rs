@@ -1,44 +1,49 @@
 use std::collections::HashMap;
-use std::ops::Range;
+use std::ops::{Range, RangeBounds};
 
-use slotmap::{DefaultKey, SlotMap};
+use slotmap::{new_key_type, SlotMap};
 
 mod dsl;
 
 use dsl::Expr;
 
-// TODO: FuzzyKey
-
 /// A value between zero and one
 pub struct ZeroOne(f32);
 
-pub struct Variables(SlotMap<DefaultKey, Variable>);
+new_key_type! {
+    /// A variable
+    pub struct Variable;
+}
+
+#[derive(Default)]
+pub struct Variables(SlotMap<Variable, VariableContraints>);
 
 impl Variables {
     pub fn new() -> Self {
-        Self(SlotMap::new())
+        Self(SlotMap::with_key())
     }
 
     pub fn add(
         &mut self,
-        universe_range: Range<f32>,
+        universe: Range<f32>,
         terms: HashMap<&'static str, Vec<(f32, f32)>>,
         certainty_factor: impl Into<Option<ZeroOne>>,
-    ) -> DefaultKey {
-        self.0.insert(Variable {
-            universe_range,
+    ) -> Variable {
+        self.0.insert(VariableContraints {
+            universe,
             terms,
             certainty_factor: certainty_factor.into().unwrap_or(ZeroOne(1.)),
         })
     }
 }
 
-struct Variable {
-    universe_range: Range<f32>,
+struct VariableContraints {
+    universe: Range<f32>,
     terms: HashMap<&'static str, Vec<(f32, f32)>>,
     certainty_factor: ZeroOne,
 }
 
+#[derive(Default)]
 pub struct Rules(Vec<Rule>);
 
 impl Rules {
@@ -93,15 +98,8 @@ fn test_bank_loan() {
     let credit = vars.add(0. ..10., credit_terms, ZeroOne(1.));
     let mut rules = Rules::new();
 
-    rules.add(Expr::And(vec![
-        Expr::Eq(score, "High"),
-        Expr::Eq(ratio, "Goodr"),
-        Expr::Eq(credit, "Goodc"),
-    ]));
-    rules.add(Expr::And(vec![
-        Expr::Eq(score, "Low"),
-        Expr::Or(vec![Expr::Eq(ratio, "Badr"), Expr::Eq(credit, "Badc")]),
-    ]));
+    rules.add(score.eq("High").and2(ratio.eq("Goodr"), credit.eq("Goodc")));
+    rules.add(score.eq("Low").and(ratio.eq("Badr").or(credit.eq("Badc"))));
 
     eval(&vars, &rules, &[]);
 }
