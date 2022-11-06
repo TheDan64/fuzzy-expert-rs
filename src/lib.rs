@@ -1,12 +1,17 @@
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::RangeInclusive;
 
 use slotmap::{new_key_type, SlotMap};
 
 mod dsl;
+mod linspace;
+mod math;
 
 use dsl::Expr;
+use linspace::Linspace;
+use math::interp;
 
 /// A value between zero and one
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -29,11 +34,11 @@ impl<I> Copy for Variable<I> {}
 
 // REVIEW: Is this really only input variables?
 #[derive(Default)]
-pub struct Variables<T>(SlotMap<VariableKey, VariableContraints>, PhantomData<T>);
+pub struct Variables<T>(SlotMap<VariableKey, VariableContraints<T>>);
 
 impl<T: Terms> Variables<T> {
     pub fn new() -> Self {
-        Self(SlotMap::with_key(), PhantomData)
+        Self(SlotMap::with_key())
     }
 
     pub fn add<I: Into<T>>(
@@ -50,62 +55,15 @@ impl<T: Terms> Variables<T> {
     }
 }
 
-struct Linspace {
-    start: f32,
-    step: f32,
-    index: usize,
-    len: usize,
-}
-
-impl Linspace {
-    fn new(min: f32, max: f32, n: usize) -> Self {
-        let step = if n > 1 {
-            // REVIEW: try_from instead of cast?
-            let num_steps = (n - 1) as f32;
-            (max - min) / num_steps
-        } else {
-            0.
-        };
-        Linspace {
-            start: min,
-            step,
-            index: 0,
-            len: n,
-        }
-    }
-}
-
-impl Iterator for Linspace {
-    type Item = f32;
-
-    #[inline]
-    fn next(&mut self) -> Option<f32> {
-        if self.index >= self.len {
-            None
-        } else {
-            // Calculate the value just like numpy.linspace does
-            let i = self.index;
-            self.index += 1;
-            // REVIEW: try_from instead of cast?
-            Some(self.start + self.step * i as f32)
-        }
-    }
-
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = self.len - self.index;
-        (n, Some(n))
-    }
-}
-
-struct VariableContraints {
+struct VariableContraints<T> {
     universe: Vec<f32>,
     certainty_factor: ZeroOne,
     min_u: f32,
     max_u: f32,
+    terms: HashMap<T, Vec<f32>>,
 }
 
-impl VariableContraints {
+impl<T: Terms> VariableContraints<T> {
     pub fn new(universe_range: RangeInclusive<f32>, certainty_factor: ZeroOne) -> Self {
         // self.terms: dict = terms
 
@@ -117,13 +75,29 @@ impl VariableContraints {
         // where the decimals are really long: int(4.999999999999999999) == 5
         let num = ((max_u - min_u) / step).floor() as usize + 1;
         let universe = Linspace::new(min_u, max_u, num).collect();
-
-        Self {
+        let start_terms = T::build();
+        let mut this = Self {
             universe,
             certainty_factor,
             min_u,
             max_u,
+            terms: HashMap::with_capacity(start_terms.len()),
+        };
+
+        // Load from tuple?
+        if false {
+            unimplemented!();
+        // Load from list
+        } else {
+            for (term, membership) in &start_terms {
+                let xp = membership.iter().map(|(xp, _)| *xp);
+                this.add_points_to_universe(xp);
+                this.terms
+                    .insert(*term, interp(&this.universe, membership.iter().copied()));
+            }
         }
+
+        this
     }
 
     fn add_points_to_universe(&mut self, points: impl IntoIterator<Item = f32>) {
@@ -168,8 +142,9 @@ struct Rule<T, O> {
     consequence: O,
 }
 
-pub trait Terms {
-    fn values(&self) -> &'static [(f32, f32)];
+pub trait Terms: Copy + Eq + Hash + Sized {
+    // fn values(&self) -> &'static [(f32, f32)];
+    fn build() -> HashMap<Self, Vec<(f32, f32)>>;
 }
 
 #[derive(Default)]
@@ -327,26 +302,31 @@ impl DecompInference {
 
 #[test]
 fn test_bank_loan() {
+    #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
     enum Score {
         High,
         Low,
     }
 
+    #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
     enum Ratio {
         Good,
         Bad,
     }
 
+    #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
     enum Credit {
         Good,
         Bad,
     }
 
+    #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
     enum Decision {
         Approve,
         Reject,
     }
 
+    #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
     enum VarTerms {
         Score(Score),
         Ratio(Ratio),
@@ -379,23 +359,67 @@ fn test_bank_loan() {
     }
 
     impl Terms for VarTerms {
-        fn values(&self) -> &'static [(f32, f32)] {
-            match self {
-                Self::Score(Score::High) => &[(175., 0.), (180., 0.2), (185., 0.7), (190., 1.)],
-                Self::Score(Score::Low) => &[
+        // fn values(&self) -> &'static [(f32, f32)] {
+        //     match self {
+        //         Self::Score(Score::High) => &[(175., 0.), (180., 0.2), (185., 0.7), (190., 1.)],
+        //         Self::Score(Score::Low) => &[
+        //             (155., 1.),
+        //             (160., 0.8),
+        //             (165., 0.5),
+        //             (170., 0.2),
+        //             (175., 0.),
+        //         ],
+        //         Self::Ratio(Ratio::Good) => &[(0.3, 1.), (0.4, 0.7), (0.41, 0.3), (0.42, 0.)],
+        //         Self::Ratio(Ratio::Bad) => &[(0.44, 0.), (0.45, 0.3), (0.5, 0.7), (0.7, 1.)],
+        //         Self::Credit(Credit::Good) => &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
+        //         Self::Credit(Credit::Bad) => &[(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)],
+        //         Self::Decision(Decision::Approve) => &[(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)],
+        //         Self::Decision(Decision::Reject) => &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
+        //     }
+        // }
+
+        fn build() -> HashMap<Self, Vec<(f32, f32)>> {
+            let mut map = HashMap::with_capacity(8);
+
+            map.insert(
+                Self::Score(Score::High),
+                vec![(175., 0.), (180., 0.2), (185., 0.7), (190., 1.)],
+            );
+            map.insert(
+                Self::Score(Score::Low),
+                vec![
                     (155., 1.),
                     (160., 0.8),
                     (165., 0.5),
                     (170., 0.2),
                     (175., 0.),
                 ],
-                Self::Ratio(Ratio::Good) => &[(0.3, 1.), (0.4, 0.7), (0.41, 0.3), (0.42, 0.)],
-                Self::Ratio(Ratio::Bad) => &[(0.44, 0.), (0.45, 0.3), (0.5, 0.7), (0.7, 1.)],
-                Self::Credit(Credit::Good) => &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
-                Self::Credit(Credit::Bad) => &[(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)],
-                Self::Decision(Decision::Approve) => &[(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)],
-                Self::Decision(Decision::Reject) => &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
-            }
+            );
+            map.insert(
+                Self::Ratio(Ratio::Good),
+                vec![(0.3, 1.), (0.4, 0.7), (0.41, 0.3), (0.42, 0.)],
+            );
+            map.insert(
+                Self::Ratio(Ratio::Bad),
+                vec![(0.44, 0.), (0.45, 0.3), (0.5, 0.7), (0.7, 1.)],
+            );
+            map.insert(
+                Self::Credit(Credit::Good),
+                vec![(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
+            );
+            map.insert(
+                Self::Credit(Credit::Bad),
+                vec![(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)],
+            );
+            map.insert(
+                Self::Decision(Decision::Approve),
+                vec![(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)],
+            );
+            map.insert(
+                Self::Decision(Decision::Reject),
+                vec![(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
+            );
+            map
         }
     }
 
