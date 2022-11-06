@@ -51,7 +51,7 @@ impl<T: Terms> Variables<T> {
         certainty_factor: impl Into<Option<ZeroOne>>,
     ) -> Variable<I> {
         let start_term_coords = I::variants()
-            .into_iter()
+            .iter()
             .copied()
             .map(Into::into)
             .map(|t: T| (t, t.values()));
@@ -414,6 +414,8 @@ fn test_bank_loan() {
             }
         }
     }
+
+    // TODO: The above lines should all be compressed into a macro_rules macro
 
     let mut vars = Variables::<VarTerms>::new();
     let score = vars.add::<Score>(150. ..=200., ZeroOne(1.));
