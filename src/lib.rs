@@ -1,8 +1,10 @@
-use std::collections::HashMap;
+use std::cmp::max;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::ops::RangeInclusive;
+use std::ops::{RangeInclusive, Sub};
+use std::{cmp::min, collections::HashMap};
 
+use num::Float;
 use slotmap::{new_key_type, SlotMap};
 
 mod dsl;
@@ -105,8 +107,10 @@ impl<T: Terms> VariableContraints<T> {
             for (term, membership) in start_term_coords {
                 let xp = membership.iter().map(|(xp, _)| *xp);
                 this.add_points_to_universe(xp);
-                this.terms
-                    .insert(term, interp(&this.universe, membership.iter().copied()));
+                this.terms.insert(
+                    term,
+                    interp(this.universe.iter().copied(), membership.iter().copied()),
+                );
             }
         }
 
@@ -203,6 +207,7 @@ pub enum CompositionOp {
 
 /// Implication operator method for computing the compisitions of propositions
 /// in a fuzzy rule premise.
+#[derive(Clone, Copy, Debug)]
 pub enum ImplicationOp {
     Ra,
     Rm,
@@ -214,6 +219,85 @@ pub enum ImplicationOp {
     Rgs,
     Rgg,
     Rss,
+}
+
+impl ImplicationOp {
+    pub fn call<F: Float>(
+        self,
+        u: impl IntoIterator<Item = F>,
+        v: impl IntoIterator<Item = F>,
+    ) -> impl IntoIterator<Item = F> {
+        u.into_iter()
+            .zip(v.into_iter())
+            .map(move |(u, v)| match self {
+                Self::Ra => F::min(F::one(), F::one() - u + v),
+                Self::Rm => F::max(F::min(u, v), F::one() - u),
+                Self::Rc => F::min(u, v),
+                Self::Rb => F::max(F::one() - u, v),
+                Self::Rs => {
+                    if u <= v {
+                        F::one()
+                    } else {
+                        F::zero()
+                    }
+                }
+                Self::Rg => {
+                    if u <= v {
+                        F::one()
+                    } else {
+                        v
+                    }
+                }
+                Self::Rsg => F::min(
+                    Self::Rs
+                        .call(Some(u), Some(v))
+                        .into_iter()
+                        .next()
+                        .expect("unreachable"),
+                    Self::Rg
+                        .call(Some(F::one() - u), Some(F::one() - v))
+                        .into_iter()
+                        .next()
+                        .expect("unreachable"),
+                ),
+                Self::Rgs => F::min(
+                    Self::Rg
+                        .call(Some(u), Some(v))
+                        .into_iter()
+                        .next()
+                        .expect("unreachable"),
+                    Self::Rs
+                        .call(Some(F::one() - u), Some(F::one() - v))
+                        .into_iter()
+                        .next()
+                        .expect("unreachable"),
+                ),
+                Self::Rgg => F::min(
+                    Self::Rg
+                        .call(Some(u), Some(v))
+                        .into_iter()
+                        .next()
+                        .expect("unreachable"),
+                    Self::Rg
+                        .call(Some(F::one() - u), Some(F::one() - v))
+                        .into_iter()
+                        .next()
+                        .expect("unreachable"),
+                ),
+                Self::Rss => F::min(
+                    Self::Rs
+                        .call(Some(u), Some(v))
+                        .into_iter()
+                        .next()
+                        .expect("unreachable"),
+                    Self::Rs
+                        .call(Some(F::one() - u), Some(F::one() - v))
+                        .into_iter()
+                        .next()
+                        .expect("unreachable"),
+                ),
+            })
+    }
 }
 
 /// Method for aggregating the consequences of the fuzzy rules
@@ -272,40 +356,76 @@ impl DecompInference {
     pub fn eval<'r, T: Terms, O: Into<T>>(
         &self,
         vars: &mut Variables<T>,
-        rules: &'r Rules<T, O>,
+        rules: &'r mut Rules<T, O>,
         inputs: &Inputs,
     ) -> &'r O {
         // Convert Inputs to facts
         // Converts input values to FIS facts
-        let mut fact_values = HashMap::with_capacity(inputs.0.len());
+        let mut fact_value = HashMap::with_capacity(inputs.0.len());
         let mut fact_cf = HashMap::with_capacity(inputs.0.len());
 
         for (key, input_value) in &inputs.0 {
-            fact_values.insert(*key, *input_value);
+            fact_value.insert(*key, *input_value);
             fact_cf.insert(*key, vars.0[*key].certainty_factor);
         }
 
         // Fuzzificate Facts
         // Convert crisp facts to membership functions
-        let mut fact_types = HashMap::with_capacity(fact_values.len());
+        // let mut fact_types = HashMap::with_capacity(fact_value.len());
+        let mut fact_values = HashMap::with_capacity(inputs.0.len());
 
-        for (key, fact_value) in fact_values {
+        for (key, fact_value) in fact_value {
             // py: (float, int?)
             // This will eventually be an enum match
             if true {
                 // Fuzzificate Crisp Fact
-                vars.0[key].add_points_to_universe(Some(fact_value));
-                // self.fact_values[fact_name] = np.array(
-                //     [1 if u == fact_value else 0 for u in self.variables[fact_name].universe]
-                // )
-                fact_types.insert(key, "Crisp");
-            // py: list
+                let var = &mut vars.0[key];
+
+                var.add_points_to_universe(Some(fact_value));
+                fact_values.insert(
+                    key,
+                    var.universe
+                        .iter()
+                        .map(|u| if *u == fact_value { 1 } else { 0 })
+                        .collect::<Vec<_>>(),
+                );
+                // fact_types.insert(key, "Crisp");
+                // py: list
             } else {
                 // TODO: Fuzzificate fuzzy fact
-                fact_types.insert(key, "Fuzzy");
+                // fact_types.insert(key, "Fuzzy");
                 unimplemented!();
             }
         }
+
+        // TODO: Compute Modified Premise Memberships
+        for rule in &mut rules.0 {
+            // TODO: rule.modified_premise_memberships = ...
+            // let modified_premise_memberships = HashMap::new();
+            // TODO: Apply modifiers
+        }
+
+        // TODO: Compute Modified Consequence Memberships
+        for rule in &mut rules.0 {
+            // TODO: Apply modifiers
+        }
+
+        // TODO: Compute Fuzzy Implication
+        for rule in &mut rules.0 {}
+
+        // TODO: Compute Fuzzy Composition
+
+        // TODO: Combine Antecedents
+
+        // TODO: Compute Rule Inferred CF
+
+        // TODO: Collect Rule Memberships
+
+        // TODO: Aggregate Collected Memberships
+
+        // TODO: Aggregate Production CF
+
+        // TODO: Defuzzificate
 
         // Placeholder
         &rules.0[0].consequence
@@ -452,5 +572,5 @@ fn test_bank_loan() {
         DefuzzificationOp::Cog,
     );
 
-    model.eval(&mut vars, &rules, &inputs);
+    model.eval(&mut vars, &mut rules, &inputs);
 }

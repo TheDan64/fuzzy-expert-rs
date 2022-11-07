@@ -3,13 +3,15 @@ use std::ops::{Add, Mul, Sub};
 use num::Float;
 
 /// Similar to numpy.interp
-pub(crate) fn interp<F>(x_input: &[F], coords: impl IntoIterator<Item = (F, F)> + Clone) -> Vec<F>
+pub(crate) fn interp<F>(
+    x_input: impl IntoIterator<Item = F>,
+    coords: impl IntoIterator<Item = (F, F)> + Clone,
+) -> Vec<F>
 where
     F: Add + Float + Mul + Sub,
 {
     x_input
-        .iter()
-        .copied()
+        .into_iter()
         .map(|x| {
             // TODO: Benchmark; prob faster to pull out into vec
             let mut iter = coords.clone().into_iter().enumerate().peekable();
@@ -47,7 +49,7 @@ fn test_interp() {
     let ys = [3., 2., 0.];
 
     assert_eq!(
-        interp(&x, xs.into_iter().zip(ys.into_iter())),
+        interp(x, xs.into_iter().zip(ys.into_iter())),
         vec![3., 3., 2.5, 0.5599999999999996, 0.]
     );
 
@@ -56,7 +58,7 @@ fn test_interp() {
     let ys = [0., 2., 5., 3., 2.];
 
     assert_eq!(
-        interp(&x, xs.into_iter().zip(ys.into_iter())),
+        interp(x, xs.into_iter().zip(ys.into_iter())),
         vec![4., 0., 2.]
     );
 }
