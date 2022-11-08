@@ -1,8 +1,7 @@
-use std::cmp::max;
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::ops::{RangeInclusive, Sub};
-use std::{cmp::min, collections::HashMap};
+use std::ops::RangeInclusive;
 
 use num::Float;
 use slotmap::{new_key_type, SlotMap};
@@ -13,7 +12,7 @@ mod math;
 
 use dsl::Expr;
 use linspace::Linspace;
-use math::interp;
+use math::{interp, meshgrid, Matrix};
 
 /// A value between zero and one
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -191,6 +190,31 @@ pub enum AndOp {
     DrasticProd,
 }
 
+impl AndOp {
+    pub fn call<F: Float>(
+        self,
+        u: impl IntoIterator<Item = F>,
+        v: impl IntoIterator<Item = F>,
+    ) -> impl IntoIterator<Item = F> {
+        u.into_iter()
+            .zip(v.into_iter())
+            .map(move |(u, v)| match self {
+                Self::Min => F::min(u, v),
+                Self::Prod => u * v,
+                Self::BoundedProd => F::max(F::zero(), u + v - F::one()),
+                Self::DrasticProd => {
+                    if v == F::zero() {
+                        u
+                    } else if u == F::one() {
+                        v
+                    } else {
+                        F::zero()
+                    }
+                }
+            })
+    }
+}
+
 /// Or operator method for combining the compositions of propositions
 /// in a fuzzy rule premise.
 pub enum OrOp {
@@ -198,6 +222,31 @@ pub enum OrOp {
     ProbOr,
     BoundedSum,
     DrasticSum,
+}
+
+impl OrOp {
+    pub fn call<F: Float>(
+        self,
+        u: impl IntoIterator<Item = F>,
+        v: impl IntoIterator<Item = F>,
+    ) -> impl IntoIterator<Item = F> {
+        u.into_iter()
+            .zip(v.into_iter())
+            .map(move |(u, v)| match self {
+                Self::Max => F::max(u, v),
+                Self::ProbOr => u + v - u * v,
+                Self::BoundedSum => F::min(F::one(), u + v),
+                Self::DrasticSum => {
+                    if v == F::zero() {
+                        u
+                    } else if u == F::zero() {
+                        v
+                    } else {
+                        F::one()
+                    }
+                }
+            })
+    }
 }
 
 pub enum CompositionOp {
@@ -353,10 +402,13 @@ impl DecompInference {
             defuzz_op,
         }
     }
+
+    // TODO: Maybe can make vars and rules immutable if they're just starting state
+    // and everything else is calculated here
     pub fn eval<'r, T: Terms, O: Into<T>>(
         &self,
         vars: &mut Variables<T>,
-        rules: &'r mut Rules<T, O>,
+        rules: &'r Rules<T, O>,
         inputs: &Inputs,
     ) -> &'r O {
         // Convert Inputs to facts
@@ -399,19 +451,55 @@ impl DecompInference {
         }
 
         // TODO: Compute Modified Premise Memberships
-        for rule in &mut rules.0 {
-            // TODO: rule.modified_premise_memberships = ...
-            // let modified_premise_memberships = HashMap::new();
+        let modified_premise_memberships: HashMap<(usize, VariableKey), Vec<f32>> = HashMap::new();
+
+        for rule in &rules.0 {
             // TODO: Apply modifiers
         }
 
         // TODO: Compute Modified Consequence Memberships
-        for rule in &mut rules.0 {
+        let modified_consequence_memberships: HashMap<(usize, VariableKey), Vec<f32>> =
+            HashMap::new();
+
+        for rule in &rules.0 {
             // TODO: Apply modifiers
         }
 
         // TODO: Compute Fuzzy Implication
-        for rule in &mut rules.0 {}
+        let fuzzy_implications: HashMap<(usize, VariableKey, VariableKey), Matrix<f32>> =
+            HashMap::with_capacity(
+                rules.0.len()
+                    * modified_premise_memberships.len()
+                    * modified_consequence_memberships.len(),
+            );
+
+        for (i, rule) in rules.0.iter().enumerate() {
+            for (j, premise_name) in modified_premise_memberships.keys() {
+                // TODO: Better layout hash maps so we can skip other rules
+                if *j != i {
+                    continue;
+                }
+
+                for (k, consequence_name) in modified_consequence_memberships.keys() {
+                    if *k != i {
+                        continue;
+                    }
+
+                    let premise_membership = &modified_premise_memberships[&(i, *premise_name)];
+                    let consequence_membership =
+                        &modified_consequence_memberships[&(i, *consequence_name)];
+                    let (v, u) = meshgrid(
+                        consequence_membership.iter().copied(),
+                        premise_membership.iter().copied(),
+                    );
+
+                    // fuzzy_implications.insert(
+                    //     (i, *premise_name, *consequence_name),
+                    //     self.imp_op.call(u, v).matrix(v.shape()),
+                    // );
+                }
+            }
+        }
 
         // TODO: Compute Fuzzy Composition
 

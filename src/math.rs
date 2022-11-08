@@ -1,6 +1,52 @@
-use std::ops::{Add, Mul, Sub};
+use std::{
+    iter::repeat,
+    ops::{Add, Mul, Sub},
+};
 
 use num::Float;
+
+// Could maybe use ndarray for this in the future?
+pub(crate) struct Matrix<F> {
+    values: Vec<F>,
+    shape: (usize, usize),
+}
+
+impl<F> Matrix<F> {
+    pub fn shape(&self) -> (usize, usize) {
+        self.shape
+    }
+}
+
+impl<F: Float> IntoIterator for Matrix<F> {
+    type Item = F;
+    type IntoIter = <Vec<F> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.into_iter()
+    }
+}
+
+pub(crate) fn meshgrid<F: Float, I, I2>(u: I, v: I2) -> (Matrix<F>, Matrix<F>)
+where
+    I: IntoIterator<Item = F>,
+    I::IntoIter: Clone + ExactSizeIterator,
+    I2: IntoIterator<Item = F>,
+    I2::IntoIter: ExactSizeIterator,
+{
+    let u = u.into_iter();
+    let v = v.into_iter();
+    let shape = (u.len(), v.len());
+    let values = u.cycle().take(shape.0 * shape.1).collect();
+    let values2 = v.flat_map(|v| repeat(v).take(shape.0)).collect();
+
+    (
+        Matrix { values, shape },
+        Matrix {
+            values: values2,
+            shape,
+        },
+    )
+}
 
 /// Similar to numpy.interp
 pub(crate) fn interp<F>(
@@ -61,4 +107,20 @@ fn test_interp() {
         interp(x, xs.into_iter().zip(ys.into_iter())),
         vec![4., 0., 2.]
     );
+}
+
+#[test]
+fn test_meshgrid() {
+    let (m1, m2) = meshgrid([1., 2., 3.], [4., 5., 8., 7.]);
+
+    assert_eq!(
+        m1.values,
+        vec![1., 2., 3., 1., 2., 3., 1., 2., 3., 1., 2., 3.]
+    );
+    assert_eq!(m1.shape, (3, 4));
+    assert_eq!(
+        m2.values,
+        vec![4., 4., 4., 5., 5., 5., 8., 8., 8., 7., 7., 7.]
+    );
+    assert_eq!(m2.shape, (3, 4));
 }
