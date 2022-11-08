@@ -12,7 +12,7 @@ mod math;
 
 use dsl::Expr;
 use linspace::Linspace;
-use math::{interp, meshgrid, Matrix};
+use math::{interp, meshgrid, CollectMatrix, Matrix};
 
 /// A value between zero and one
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -196,22 +196,12 @@ impl AndOp {
         u: impl IntoIterator<Item = F>,
         v: impl IntoIterator<Item = F>,
     ) -> impl IntoIterator<Item = F> {
-        u.into_iter()
-            .zip(v.into_iter())
-            .map(move |(u, v)| match self {
-                Self::Min => F::min(u, v),
-                Self::Prod => u * v,
-                Self::BoundedProd => F::max(F::zero(), u + v - F::one()),
-                Self::DrasticProd => {
-                    if v == F::zero() {
-                        u
-                    } else if u == F::one() {
-                        v
-                    } else {
-                        F::zero()
-                    }
-                }
-            })
+        match self {
+            Self::Min => ProductionLink::Max.call(u, v),
+            Self::Prod => ProductionLink::Prod.call(u, v),
+            Self::BoundedProd => ProductionLink::BoundedProd.call(u, v),
+            Self::DrasticProd => ProductionLink::DrasticProd.call(u, v),
+        }
     }
 }
 
@@ -230,22 +220,12 @@ impl OrOp {
         u: impl IntoIterator<Item = F>,
         v: impl IntoIterator<Item = F>,
     ) -> impl IntoIterator<Item = F> {
-        u.into_iter()
-            .zip(v.into_iter())
-            .map(move |(u, v)| match self {
-                Self::Max => F::max(u, v),
-                Self::ProbOr => u + v - u * v,
-                Self::BoundedSum => F::min(F::one(), u + v),
-                Self::DrasticSum => {
-                    if v == F::zero() {
-                        u
-                    } else if u == F::zero() {
-                        v
-                    } else {
-                        F::one()
-                    }
-                }
-            })
+        match self {
+            Self::Max => ProductionLink::Max.call(u, v),
+            Self::ProbOr => ProductionLink::ProbOr.call(u, v),
+            Self::BoundedSum => ProductionLink::BoundedSum.call(u, v),
+            Self::DrasticSum => ProductionLink::DrasticSum.call(u, v),
+        }
     }
 }
 
@@ -361,6 +341,43 @@ pub enum ProductionLink {
     DrasticSum,
 }
 
+impl ProductionLink {
+    pub fn call<F: Float>(
+        self,
+        u: impl IntoIterator<Item = F>,
+        v: impl IntoIterator<Item = F>,
+    ) -> impl IntoIterator<Item = F> {
+        u.into_iter()
+            .zip(v.into_iter())
+            .map(move |(u, v)| match self {
+                Self::Max => F::max(u, v),
+                Self::ProbOr => u + v - u * v,
+                Self::BoundedSum => F::min(F::one(), u + v),
+                Self::DrasticSum => {
+                    if v == F::zero() {
+                        u
+                    } else if u == F::zero() {
+                        v
+                    } else {
+                        F::one()
+                    }
+                }
+                Self::Min => F::min(u, v),
+                Self::Prod => u * v,
+                Self::BoundedProd => F::max(F::zero(), u + v - F::one()),
+                Self::DrasticProd => {
+                    if v == F::zero() {
+                        u
+                    } else if u == F::one() {
+                        v
+                    } else {
+                        F::zero()
+                    }
+                }
+            })
+    }
+}
+
 /// Method for defuzzifcating the resulting membership function.
 pub enum DefuzzificationOp {
     /// Center of Gravity
@@ -466,12 +483,11 @@ impl DecompInference {
         }
 
         // TODO: Compute Fuzzy Implication
-        let fuzzy_implications: HashMap<(usize, VariableKey, VariableKey), Matrix<f32>> =
-            HashMap::with_capacity(
-                rules.0.len()
-                    * modified_premise_memberships.len()
-                    * modified_consequence_memberships.len(),
-            );
+        let mut fuzzy_implications = HashMap::with_capacity(
+            rules.0.len()
+                * modified_premise_memberships.len()
+                * modified_consequence_memberships.len(),
+        );
 
         for (i, rule) in rules.0.iter().enumerate() {
             for (j, premise_name) in modified_premise_memberships.keys() {
@@ -492,16 +508,46 @@ impl DecompInference {
                         consequence_membership.iter().copied(),
                         premise_membership.iter().copied(),
                     );
+                    let shape = v.shape();
 
-                    // fuzzy_implications.insert(
-                    //     (i, *premise_name, *consequence_name),
-                    //     self.imp_op.call(u, v).matrix(v.shape()),
-                    // );
+                    fuzzy_implications.insert(
+                        (i, *premise_name, *consequence_name),
+                        self.imp_op.call(u, v).collect_matrix(shape),
+                    );
                 }
             }
         }
 
         // TODO: Compute Fuzzy Composition
+        let mut fuzzy_compositions = HashMap::with_capacity(fuzzy_implications.len());
+
+        for (i, rule) in rules.0.iter().enumerate() {
+            for (j, premise_name) in modified_premise_memberships.keys() {
+                // TODO: Better layout hash maps so we can skip other rules
+                if *j != i {
+                    continue;
+                }
+
+                for (k, consequence_name) in modified_consequence_memberships.keys() {
+                    if *k != i {
+                        continue;
+                    }
+
+                    let implications = &fuzzy_implications[&(i, *premise_name, *consequence_name)];
+                    let fact_values = &fact_values[premise_name];
+                    let n_dim = fact_values.len();
+                    // fact_value = fact_value.reshape((n_dim, 1))
+                    // fact_value = np.tile(fact_value, (1, implication.shape[1]))
+
+                    match self.comp_op {
+                        CompositionOp::MaxMin => unimplemented!(),
+                        CompositionOp::MaxProd => unimplemented!(),
+                    }
+
+                    fuzzy_compositions.insert((i, premise_name, consequence_name), ());
+                }
+            }
+        }
 
         // TODO: Combine Antecedents
 
@@ -660,5 +706,5 @@ fn test_bank_loan() {
         DefuzzificationOp::Cog,
     );
 
-    model.eval(&mut vars, &mut rules, &inputs);
+    model.eval(&mut vars, &rules, &inputs);
 }

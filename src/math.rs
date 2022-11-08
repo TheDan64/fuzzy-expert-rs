@@ -6,7 +6,7 @@ use std::{
 use num::Float;
 
 // Could maybe use ndarray for this in the future?
-pub(crate) struct Matrix<F> {
+pub struct Matrix<F> {
     values: Vec<F>,
     shape: (usize, usize),
 }
@@ -23,6 +23,19 @@ impl<F: Float> IntoIterator for Matrix<F> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.values.into_iter()
+    }
+}
+
+pub trait CollectMatrix<F> {
+    fn collect_matrix(self, shape: (usize, usize)) -> Matrix<F>;
+}
+
+impl<F: Float, I: IntoIterator<Item = F>> CollectMatrix<F> for I {
+    fn collect_matrix(self, shape: (usize, usize)) -> Matrix<F> {
+        Matrix {
+            values: self.into_iter().collect(),
+            shape,
+        }
     }
 }
 
