@@ -12,7 +12,7 @@ mod math;
 
 use dsl::Expr;
 use linspace::Linspace;
-use math::{interp, meshgrid, CollectMatrix, Matrix};
+use math::{interp, meshgrid, Axis, CollectMatrix, Matrix};
 
 /// A value between zero and one
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -197,7 +197,7 @@ impl AndOp {
         v: impl IntoIterator<Item = F>,
     ) -> impl IntoIterator<Item = F> {
         match self {
-            Self::Min => ProductionLink::Max.call(u, v),
+            Self::Min => ProductionLink::Min.call(u, v),
             Self::Prod => ProductionLink::Prod.call(u, v),
             Self::BoundedProd => ProductionLink::BoundedProd.call(u, v),
             Self::DrasticProd => ProductionLink::DrasticProd.call(u, v),
@@ -526,14 +526,20 @@ impl DecompInference {
                 let fact_values = &fact_values[premise_name];
                 let n_dim = fact_values.len();
                 let fact_value = Matrix::new(fact_values.to_owned(), (n_dim, 1));
-                let fact_tile = fact_value.tile((1, implication.shape().1));
+                let fact_value = fact_value.tile((1, implication.shape().1));
+                let shape = fact_value.shape();
 
-                match self.comp_op {
-                    CompositionOp::MaxMin => unimplemented!(),
-                    CompositionOp::MaxProd => unimplemented!(),
-                }
+                debug_assert_eq!(shape, implication.shape());
 
-                fuzzy_compositions.insert((i, premise_name, consequence_name), ());
+                let composition = match self.comp_op {
+                    CompositionOp::MaxMin => ProductionLink::Min
+                        .call(fact_value, implication)
+                        .collect_matrix(shape)
+                        .max(Axis::Column),
+                    CompositionOp::MaxProd => unimplemented!("fact_value * implication"), // TODO: Matrix::from_mul(fact_value, implication)?
+                };
+
+                fuzzy_compositions.insert((i, premise_name, consequence_name), composition);
             }
         }
 

@@ -1,7 +1,13 @@
-use std::iter::repeat;
+use std::iter::{repeat, Copied};
 use std::ops::{Add, Mul, Sub};
 
+use itertools::Itertools;
 use num::Float;
+
+pub enum Axis {
+    Row,
+    Column,
+}
 
 // Could maybe use ndarray for this in the future?
 pub struct Matrix<F> {
@@ -33,6 +39,24 @@ impl<F: Float> Matrix<F> {
         .flatten()
         .collect_matrix((self.shape.0 * shape.0, self.shape.1 * shape.1))
     }
+
+    pub fn max(&self, axis: Axis) -> Vec<F> {
+        let base = self.values.iter().copied().chunks(self.shape.1);
+
+        match axis {
+            Axis::Column => {
+                base.into_iter()
+                    .fold(vec![F::neg_infinity(); self.shape.1], |mut accum, next| {
+                        for (i, item) in next.enumerate() {
+                            accum[i] = F::max(accum[i], item);
+                        }
+
+                        accum
+                    })
+            }
+            Axis::Row => base.into_iter().flat_map(|v| v.reduce(F::max)).collect(),
+        }
+    }
 }
 
 impl<F: Float> IntoIterator for Matrix<F> {
@@ -41,6 +65,15 @@ impl<F: Float> IntoIterator for Matrix<F> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.values.into_iter()
+    }
+}
+
+impl<'m, F: Float> IntoIterator for &'m Matrix<F> {
+    type Item = F;
+    type IntoIter = Copied<std::slice::Iter<'m, F>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.iter().copied()
     }
 }
 
@@ -124,32 +157,23 @@ fn test_interp() {
 
     assert_eq!(
         interp(x, xs.into_iter().zip(ys.into_iter())),
-        vec![3., 3., 2.5, 0.5599999999999996, 0.]
+        [3., 3., 2.5, 0.5599999999999996, 0.]
     );
 
     let x = [2.5, -1., 7.5];
     let xs = [0., 1., 2., 3., 4.5];
     let ys = [0., 2., 5., 3., 2.];
 
-    assert_eq!(
-        interp(x, xs.into_iter().zip(ys.into_iter())),
-        vec![4., 0., 2.]
-    );
+    assert_eq!(interp(x, xs.into_iter().zip(ys.into_iter())), [4., 0., 2.]);
 }
 
 #[test]
 fn test_meshgrid() {
     let (m1, m2) = meshgrid([1., 2., 3.], [4., 5., 8., 7.]);
 
-    assert_eq!(
-        m1.values,
-        vec![1., 2., 3., 1., 2., 3., 1., 2., 3., 1., 2., 3.]
-    );
+    assert_eq!(m1.values, [1., 2., 3., 1., 2., 3., 1., 2., 3., 1., 2., 3.]);
     assert_eq!(m1.shape, (4, 3));
-    assert_eq!(
-        m2.values,
-        vec![4., 4., 4., 5., 5., 5., 8., 8., 8., 7., 7., 7.]
-    );
+    assert_eq!(m2.values, [4., 4., 4., 5., 5., 5., 8., 8., 8., 7., 7., 7.]);
     assert_eq!(m2.shape, (4, 3));
 }
 
@@ -163,7 +187,7 @@ fn test_tile() {
 
     assert_eq!(
         m2.values,
-        vec![
+        [
             1., 1., 1., 2., 2., 2., 3., 3., 3., 4., 4., 4., 5., 5., 5., 1., 1., 1., 2., 2., 2., 3.,
             3., 3., 4., 4., 4., 5., 5., 5.
         ]
@@ -178,10 +202,21 @@ fn test_tile() {
 
     assert_eq!(
         m2.values,
-        vec![
+        [
             1., 1., 1., 1., 2., 2., 2., 2., 3., 3., 3., 3., 4., 4., 4., 4., 5., 5., 5., 5., 1., 1.,
             1., 1., 2., 2., 2., 2., 3., 3., 3., 3., 4., 4., 4., 4., 5., 5., 5., 5.
         ]
     );
     assert_eq!(m2.shape(), (10, 4));
+}
+
+#[test]
+fn test_max() {
+    let m1 = Matrix {
+        values: vec![1., 2., 3., 4., 5., 6.],
+        shape: (3, 2),
+    };
+
+    assert_eq!(m1.max(Axis::Column), [5., 6.]);
+    assert_eq!(m1.max(Axis::Row), [2., 4., 6.]);
 }
