@@ -455,7 +455,7 @@ impl DecompInference {
                     key,
                     var.universe
                         .iter()
-                        .map(|u| if *u == fact_value { 1 } else { 0 })
+                        .map(|u| if *u == fact_value { 1.0f32 } else { 0. })
                         .collect::<Vec<_>>(),
                 );
                 // fact_types.insert(key, "Crisp");
@@ -489,63 +489,51 @@ impl DecompInference {
                 * modified_consequence_memberships.len(),
         );
 
-        for (i, rule) in rules.0.iter().enumerate() {
-            for (j, premise_name) in modified_premise_memberships.keys() {
-                // TODO: Better layout hash maps so we can skip other rules
-                if *j != i {
+        for (i, premise_name) in modified_premise_memberships.keys() {
+            for (j, consequence_name) in modified_consequence_memberships.keys() {
+                // TODO: It'd be great if we didn't have to iterate through all other rules' consequences
+                // Maybe want to turn modified_consequence_memberships into Map<RuleId, Vec<VariableKey>>?
+                if *i != *j {
                     continue;
                 }
 
-                for (k, consequence_name) in modified_consequence_memberships.keys() {
-                    if *k != i {
-                        continue;
-                    }
+                let premise_membership = &modified_premise_memberships[&(*i, *premise_name)];
+                let consequence_membership =
+                    &modified_consequence_memberships[&(*i, *consequence_name)];
+                let (v, u) = meshgrid(
+                    consequence_membership.iter().copied(),
+                    premise_membership.iter().copied(),
+                );
+                let shape = v.shape();
 
-                    let premise_membership = &modified_premise_memberships[&(i, *premise_name)];
-                    let consequence_membership =
-                        &modified_consequence_memberships[&(i, *consequence_name)];
-                    let (v, u) = meshgrid(
-                        consequence_membership.iter().copied(),
-                        premise_membership.iter().copied(),
-                    );
-                    let shape = v.shape();
-
-                    fuzzy_implications.insert(
-                        (i, *premise_name, *consequence_name),
-                        self.imp_op.call(u, v).collect_matrix(shape),
-                    );
-                }
+                fuzzy_implications.insert(
+                    (i, *premise_name, *consequence_name),
+                    self.imp_op.call(u, v).collect_matrix(shape),
+                );
             }
         }
 
         // TODO: Compute Fuzzy Composition
         let mut fuzzy_compositions = HashMap::with_capacity(fuzzy_implications.len());
 
-        for (i, rule) in rules.0.iter().enumerate() {
-            for (j, premise_name) in modified_premise_memberships.keys() {
-                // TODO: Better layout hash maps so we can skip other rules
-                if *j != i {
+        for (i, premise_name) in modified_premise_memberships.keys() {
+            for (j, consequence_name) in modified_consequence_memberships.keys() {
+                if *i != *j {
                     continue;
                 }
 
-                for (k, consequence_name) in modified_consequence_memberships.keys() {
-                    if *k != i {
-                        continue;
-                    }
+                let implication = &fuzzy_implications[&(i, *premise_name, *consequence_name)];
+                let fact_values = &fact_values[premise_name];
+                let n_dim = fact_values.len();
+                let fact_value = Matrix::new(fact_values.to_owned(), (n_dim, 1));
+                let fact_tile = fact_value.tile((1, implication.shape().1));
 
-                    let implications = &fuzzy_implications[&(i, *premise_name, *consequence_name)];
-                    let fact_values = &fact_values[premise_name];
-                    let n_dim = fact_values.len();
-                    // fact_value = fact_value.reshape((n_dim, 1))
-                    // fact_value = np.tile(fact_value, (1, implication.shape[1]))
-
-                    match self.comp_op {
-                        CompositionOp::MaxMin => unimplemented!(),
-                        CompositionOp::MaxProd => unimplemented!(),
-                    }
-
-                    fuzzy_compositions.insert((i, premise_name, consequence_name), ());
+                match self.comp_op {
+                    CompositionOp::MaxMin => unimplemented!(),
+                    CompositionOp::MaxProd => unimplemented!(),
                 }
+
+                fuzzy_compositions.insert((i, premise_name, consequence_name), ());
             }
         }
 
@@ -556,6 +544,7 @@ impl DecompInference {
         // TODO: Collect Rule Memberships
 
         // TODO: Aggregate Collected Memberships
+        // let mut aggregated_memberships = HashMap::new();
 
         // TODO: Aggregate Production CF
 

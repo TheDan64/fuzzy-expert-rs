@@ -1,7 +1,5 @@
-use std::{
-    iter::repeat,
-    ops::{Add, Mul, Sub},
-};
+use std::iter::repeat;
+use std::ops::{Add, Mul, Sub};
 
 use num::Float;
 
@@ -12,8 +10,28 @@ pub struct Matrix<F> {
 }
 
 impl<F> Matrix<F> {
+    pub fn new(values: Vec<F>, shape: (usize, usize)) -> Self {
+        debug_assert_eq!(values.len(), shape.0 * shape.1);
+
+        Self { values, shape }
+    }
+
     pub fn shape(&self) -> (usize, usize) {
         self.shape
+    }
+}
+
+impl<F: Float> Matrix<F> {
+    pub fn tile(&self, shape: (usize, usize)) -> Self {
+        repeat(
+            self.values
+                .iter()
+                .copied()
+                .flat_map(|f| repeat(f).take(shape.1)),
+        )
+        .take(shape.0)
+        .flatten()
+        .collect_matrix((self.shape.0 * shape.0, self.shape.1 * shape.1))
     }
 }
 
@@ -32,10 +50,7 @@ pub trait CollectMatrix<F> {
 
 impl<F: Float, I: IntoIterator<Item = F>> CollectMatrix<F> for I {
     fn collect_matrix(self, shape: (usize, usize)) -> Matrix<F> {
-        Matrix {
-            values: self.into_iter().collect(),
-            shape,
-        }
+        Matrix::new(self.into_iter().collect(), shape)
     }
 }
 
@@ -48,9 +63,9 @@ where
 {
     let u = u.into_iter();
     let v = v.into_iter();
-    let shape = (u.len(), v.len());
+    let shape = (v.len(), u.len());
     let values = u.cycle().take(shape.0 * shape.1).collect();
-    let values2 = v.flat_map(|v| repeat(v).take(shape.0)).collect();
+    let values2 = v.flat_map(|v| repeat(v).take(shape.1)).collect();
 
     (
         Matrix { values, shape },
@@ -130,10 +145,43 @@ fn test_meshgrid() {
         m1.values,
         vec![1., 2., 3., 1., 2., 3., 1., 2., 3., 1., 2., 3.]
     );
-    assert_eq!(m1.shape, (3, 4));
+    assert_eq!(m1.shape, (4, 3));
     assert_eq!(
         m2.values,
         vec![4., 4., 4., 5., 5., 5., 8., 8., 8., 7., 7., 7.]
     );
-    assert_eq!(m2.shape, (3, 4));
+    assert_eq!(m2.shape, (4, 3));
+}
+
+#[test]
+fn test_tile() {
+    let m1 = Matrix {
+        values: vec![1., 2., 3., 4., 5.],
+        shape: (5, 1),
+    };
+    let m2 = m1.tile((2, 3));
+
+    assert_eq!(
+        m2.values,
+        vec![
+            1., 1., 1., 2., 2., 2., 3., 3., 3., 4., 4., 4., 5., 5., 5., 1., 1., 1., 2., 2., 2., 3.,
+            3., 3., 4., 4., 4., 5., 5., 5.
+        ]
+    );
+    assert_eq!(m2.shape(), (10, 3));
+
+    let m1 = Matrix {
+        values: vec![1., 1., 2., 2., 3., 3., 4., 4., 5., 5.],
+        shape: (5, 2),
+    };
+    let m2 = m1.tile((2, 2));
+
+    assert_eq!(
+        m2.values,
+        vec![
+            1., 1., 1., 1., 2., 2., 2., 2., 3., 3., 3., 3., 4., 4., 4., 4., 5., 5., 5., 5., 1., 1.,
+            1., 1., 2., 2., 2., 2., 3., 3., 3., 3., 4., 4., 4., 4., 5., 5., 5., 5.
+        ]
+    );
+    assert_eq!(m2.shape(), (10, 4));
 }
