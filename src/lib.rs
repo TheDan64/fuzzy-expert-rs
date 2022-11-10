@@ -49,18 +49,15 @@ impl<T: Terms> Variables<T> {
     pub fn add<I: Into<T> + Variants + 'static>(
         &mut self,
         universe_range: RangeInclusive<f32>,
-        certainty_factor: impl Into<Option<ZeroOne>>,
     ) -> Variable<I> {
         let start_term_coords = I::variants()
             .iter()
             .copied()
             .map(Into::into)
             .map(|t: T| (t, t.values()));
-        let key = self.0.insert(VariableContraints::new(
-            universe_range,
-            certainty_factor.into().unwrap_or(ZeroOne(1.)),
-            start_term_coords,
-        ));
+        let key = self
+            .0
+            .insert(VariableContraints::new(universe_range, start_term_coords));
 
         Variable(key, PhantomData)
     }
@@ -68,7 +65,6 @@ impl<T: Terms> Variables<T> {
 
 struct VariableContraints<T> {
     universe: Vec<f32>,
-    certainty_factor: ZeroOne,
     min_u: f32,
     max_u: f32,
     terms: HashMap<T, Vec<f32>>,
@@ -77,11 +73,8 @@ struct VariableContraints<T> {
 impl<T: Terms> VariableContraints<T> {
     pub fn new(
         universe_range: RangeInclusive<f32>,
-        certainty_factor: ZeroOne,
         start_term_coords: impl IntoIterator<Item = (T, &'static [(f32, f32)])> + ExactSizeIterator,
     ) -> Self {
-        // self.terms: dict = terms
-
         // REVIEW: This is an opt param in the original
         let step = 0.1;
         let min_u = *universe_range.start();
@@ -92,7 +85,6 @@ impl<T: Terms> VariableContraints<T> {
         let universe = Linspace::new(min_u, max_u, num).collect();
         let mut this = Self {
             universe,
-            certainty_factor,
             min_u,
             max_u,
             terms: HashMap::with_capacity(start_term_coords.len()),
@@ -167,6 +159,9 @@ impl<T: Terms, O> Rules<T, O> {
         self.0.push(Rule {
             premise,
             consequence,
+            // TODO: CFs should be overridable
+            cf: 1.0,
+            threshold_cf: 0.,
         });
     }
 }
@@ -176,6 +171,8 @@ struct Rule<T, O> {
     premise: Expr<T>,
     // TODO: Rename to result or output
     consequence: O,
+    cf: f32,
+    threshold_cf: f32,
 }
 
 pub trait Terms: Copy + Eq + Hash + Sized {
@@ -203,6 +200,7 @@ enum Fact {
 
 /// And operator method for combining the compositions of propositions
 /// in a fuzzy rule premise.
+#[derive(Clone, Copy, Debug)]
 pub enum AndOp {
     Min,
     Prod,
@@ -227,6 +225,7 @@ impl AndOp {
 
 /// Or operator method for combining the compositions of propositions
 /// in a fuzzy rule premise.
+#[derive(Clone, Copy, Debug)]
 pub enum OrOp {
     Max,
     ProbOr,
@@ -454,8 +453,9 @@ impl DecompInference {
         let mut fact_cf = HashMap::with_capacity(inputs.0.len());
 
         for (key, input_value) in &inputs.0 {
+            // TODO: Fuzzy inputs
             fact_value.insert(*key, *input_value);
-            fact_cf.insert(*key, vars.0[*key].certainty_factor);
+            fact_cf.insert(*key, 1.);
         }
 
         // Fuzzificate Facts
@@ -494,12 +494,12 @@ impl DecompInference {
             let premise = &rule.premise;
 
             for (var_key, term, modifiers) in premise.propositions() {
-                let membership = vars.0[*var_key].get_modified_membership(term, modifiers);
-                modified_premise_memberships.insert((i, *var_key), membership);
+                let membership = vars.0[var_key].get_modified_membership(term, modifiers);
+                modified_premise_memberships.insert((i, var_key), membership);
             }
         }
 
-        // TODO: Compute Modified Consequence Memberships
+        // Compute Modified Consequence Memberships
         let mut modified_consequence_memberships = HashMap::new();
 
         // TODO: Can probably move the inner loop into the previous section's loop
@@ -507,12 +507,12 @@ impl DecompInference {
             let premise = &rule.premise;
 
             for (var_key, term, modifiers) in premise.propositions() {
-                let membership = vars.0[*var_key].get_modified_membership(term, modifiers);
-                modified_consequence_memberships.insert((i, *var_key), membership);
+                let membership = vars.0[var_key].get_modified_membership(term, modifiers);
+                modified_consequence_memberships.insert((i, var_key), membership);
             }
         }
 
-        // TODO: Compute Fuzzy Implication
+        // Compute Fuzzy Implication
         let mut fuzzy_implications = HashMap::with_capacity(
             rules.0.len()
                 * modified_premise_memberships.len()
@@ -543,7 +543,7 @@ impl DecompInference {
             }
         }
 
-        // TODO: Compute Fuzzy Composition
+        // Compute Fuzzy Composition
         let mut fuzzy_compositions = HashMap::with_capacity(fuzzy_implications.len());
 
         for (i, premise_name) in modified_premise_memberships.keys() {
@@ -569,15 +569,145 @@ impl DecompInference {
                     CompositionOp::MaxProd => unimplemented!("fact_value * implication"), // TODO: Matrix::from_mul(fact_value, implication)?
                 };
 
-                fuzzy_compositions.insert((i, premise_name, consequence_name), composition);
+                fuzzy_compositions.insert((*i, *premise_name, *consequence_name), composition);
             }
         }
 
-        // TODO: Combine Antecedents
+        // Combine Antecedents
+        let mut combined_compositions = HashMap::new();
 
-        // TODO: Compute Rule Inferred CF
+        for (i, rule) in rules.0.iter().enumerate() {
+            for (j, conseqence_name) in modified_consequence_memberships.keys() {
+                if i != *j {
+                    continue;
+                }
 
-        // TODO: Collect Rule Memberships
+                // Originally tried to write this without collecting vecs at each layer, but
+                // recursive iterators are more or less impossible to write... Even with dyn trait.
+                // Not sure how to make this more performant
+                fn combine<T, F: Float>(
+                    expr: &Expr<T>,
+                    fuzzy_compositions: &HashMap<(usize, VariableKey, VariableKey), Vec<F>>,
+                    conseqence_name: VariableKey,
+                    and_op: AndOp,
+                    or_op: OrOp,
+                    rule_id: usize,
+                ) -> Vec<F> {
+                    match expr {
+                        Expr::Is(var_key, _) => {
+                            fuzzy_compositions[&(rule_id, *var_key, conseqence_name)].clone()
+                        }
+                        Expr::And(expr, expr2) => {
+                            let left = combine(
+                                expr,
+                                fuzzy_compositions,
+                                conseqence_name,
+                                and_op,
+                                or_op,
+                                rule_id,
+                            );
+                            let right = combine(
+                                expr2,
+                                fuzzy_compositions,
+                                conseqence_name,
+                                and_op,
+                                or_op,
+                                rule_id,
+                            );
+
+                            and_op.call(left, right).into_iter().collect()
+                        }
+                        Expr::Or(expr, expr2) => {
+                            let left = combine(
+                                expr,
+                                fuzzy_compositions,
+                                conseqence_name,
+                                and_op,
+                                or_op,
+                                rule_id,
+                            );
+                            let right = combine(
+                                expr2,
+                                fuzzy_compositions,
+                                conseqence_name,
+                                and_op,
+                                or_op,
+                                rule_id,
+                            );
+
+                            or_op.call(left, right).into_iter().collect()
+                        }
+                    }
+                }
+
+                let combined_composition = combine(
+                    &rule.premise,
+                    &fuzzy_compositions,
+                    *conseqence_name,
+                    self.and_op,
+                    self.or_op,
+                    i,
+                );
+
+                combined_compositions.insert((i, *conseqence_name), combined_composition);
+            }
+        }
+
+        // Compute Rule Inferred CF
+        let mut inferred_cf = HashMap::new();
+
+        for (i, rule) in rules.0.iter().enumerate() {
+            fn calc_cf<T>(expr: &Expr<T>, fact_cf: &HashMap<VariableKey, f32>) -> f32 {
+                match expr {
+                    Expr::Is(var_key, _) => fact_cf[var_key],
+                    Expr::And(expr, expr2) => {
+                        let left = calc_cf(expr, fact_cf);
+                        let right = calc_cf(expr2, fact_cf);
+
+                        f32::min(left, right)
+                    }
+                    Expr::Or(expr, expr2) => {
+                        let left = calc_cf(expr, fact_cf);
+                        let right = calc_cf(expr2, fact_cf);
+
+                        f32::max(left, right)
+                    }
+                }
+            }
+
+            let aggregated_premise_cf = calc_cf(&rule.premise, &fact_cf);
+
+            inferred_cf.insert(i, aggregated_premise_cf * rule.cf);
+        }
+
+        // Collect Rule Memberships
+        let mut collected_rule_memberships = HashMap::new();
+
+        for (i, rule) in rules.0.iter().enumerate() {
+            for (j, var_key) in combined_compositions.keys() {
+                if i != *j {
+                    continue;
+                }
+
+                // REVIEW: Is this even necessary?
+                // if !collected_rule_memberships.contains_key(var_key) {
+                //     let universe = &vars.0[*var_key].universe;
+                //     let min = universe.iter().copied().reduce(f32::min).unwrap();
+                //     let max = universe.iter().copied().reduce(f32::max).unwrap();
+                //     let mut var = VariableContraints::<T>::new(min..=max, std::iter::empty());
+                //     var.universe = universe.clone();
+
+                //     collected_rule_memberships.insert(*var_key, var);
+                // }
+
+                if inferred_cf[&i] >= rule.threshold_cf {
+                    collected_rule_memberships
+                        .entry(*var_key)
+                        .or_insert_with(Vec::new)
+                        .push(&*combined_compositions[&(i, *var_key)]);
+                }
+            }
+        }
 
         // TODO: Aggregate Collected Memberships
         // let mut aggregated_memberships = HashMap::new();
@@ -697,9 +827,9 @@ fn test_bank_loan() {
     // TODO: The above lines should all be compressed into a macro_rules macro
 
     let mut vars = Variables::<VarTerms>::new();
-    let score = vars.add::<Score>(150. ..=200., ZeroOne(1.));
-    let ratio = vars.add::<Ratio>(0.1..=1., ZeroOne(1.));
-    let credit = vars.add::<Credit>(0. ..=10., ZeroOne(1.));
+    let score = vars.add::<Score>(150. ..=200.);
+    let ratio = vars.add::<Ratio>(0.1..=1.);
+    let credit = vars.add::<Credit>(0. ..=10.);
     // let decision = vars.add::<Decision>(0. ..=10., ZeroOne(1.));
     let mut rules = Rules::new();
 
