@@ -116,19 +116,39 @@ impl<T: Terms> VariableContraints<T> {
         this
     }
 
+    // TODO: Try and make VariableContraints immutable?
     fn add_points_to_universe(&mut self, points: impl IntoIterator<Item = f32>) {
         // Adds new points to the universe
         let iter = points.into_iter().map(|p| p.clamp(self.min_u, self.max_u));
-        // REVIEW: This should probably work on a copy of universe
-        self.universe.extend(iter);
-        self.universe
-            .sort_unstable_by(|a, b| a.partial_cmp(b).expect("not to find unsortable floats"));
-        self.universe.dedup();
+        let mut universe: Vec<_> = self.universe.iter().copied().chain(iter).collect();
+
+        universe.sort_unstable_by(|a, b| a.partial_cmp(b).expect("not to find unsortable floats"));
+        universe.dedup();
 
         // Expand existent membership functions with the new points
+        for term_values in self.terms.values_mut() {
+            let new_values = interp(
+                universe.iter().copied(),
+                self.universe
+                    .iter()
+                    .copied()
+                    .zip(term_values.iter().copied()),
+            );
+
+            *term_values = new_values;
+        }
 
         // Update the universe with the new points
-        // self.universe = universe;
+        self.universe = universe;
+    }
+
+    #[allow(clippy::let_and_return)]
+    fn get_modified_membership(&self, term: &T, _modifiers: &[()]) -> &[f32] {
+        let membership = &self.terms[term];
+
+        // TODO: Apply modifiers
+
+        membership
     }
 }
 
@@ -467,19 +487,29 @@ impl DecompInference {
             }
         }
 
-        // TODO: Compute Modified Premise Memberships
-        let modified_premise_memberships: HashMap<(usize, VariableKey), Vec<f32>> = HashMap::new();
+        // Compute Modified Premise Memberships
+        let mut modified_premise_memberships = HashMap::new();
 
-        for rule in &rules.0 {
-            // TODO: Apply modifiers
+        for (i, rule) in rules.0.iter().enumerate() {
+            let premise = &rule.premise;
+
+            for (var_key, term, modifiers) in premise.propositions() {
+                let membership = vars.0[*var_key].get_modified_membership(term, modifiers);
+                modified_premise_memberships.insert((i, *var_key), membership);
+            }
         }
 
         // TODO: Compute Modified Consequence Memberships
-        let modified_consequence_memberships: HashMap<(usize, VariableKey), Vec<f32>> =
-            HashMap::new();
+        let mut modified_consequence_memberships = HashMap::new();
 
-        for rule in &rules.0 {
-            // TODO: Apply modifiers
+        // TODO: Can probably move the inner loop into the previous section's loop
+        for (i, rule) in rules.0.iter().enumerate() {
+            let premise = &rule.premise;
+
+            for (var_key, term, modifiers) in premise.propositions() {
+                let membership = vars.0[*var_key].get_modified_membership(term, modifiers);
+                modified_consequence_memberships.insert((i, *var_key), membership);
+            }
         }
 
         // TODO: Compute Fuzzy Implication
