@@ -3,6 +3,8 @@ use std::marker::PhantomData;
 use std::ops::{AddAssign, RangeInclusive};
 use std::{collections::HashMap, iter::Sum};
 
+use fixed_map::key::Key as FixedKey;
+use fixed_map::Map as FixedMap;
 use num::Float;
 use slotmap::{new_key_type, SlotMap};
 
@@ -23,6 +25,7 @@ new_key_type! {
     pub struct VariableKey;
 }
 
+// REVIEW: Is this trait necessary anymore?
 pub trait Variants: Sized + Copy {
     fn variants() -> &'static [Self];
 }
@@ -41,23 +44,22 @@ impl<I> Copy for Variable<I> {}
 #[derive(Default)]
 pub struct Variables<T>(SlotMap<VariableKey, VariableContraints<T>>);
 
-impl<T: Terms> Variables<T> {
+impl<T: Terms + std::fmt::Debug> Variables<T> {
     pub fn new() -> Self {
         Self(SlotMap::with_key())
     }
 
-    pub fn add<I: Into<T> + Variants + 'static>(
+    pub fn add<I: Into<T> + FixedKey + Variants + 'static + std::fmt::Debug>(
         &mut self,
         universe_range: RangeInclusive<f32>,
+        terms: FixedMap<I, &[(f32, f32)]>,
     ) -> Variable<I> {
-        let start_term_coords = I::variants()
-            .iter()
-            .copied()
-            .map(Into::into)
-            .map(|t: T| (t, t.values()));
-        let key = self
-            .0
-            .insert(VariableContraints::new(universe_range, start_term_coords));
+        let start_term_coords = terms.iter().map(|(k, v)| (k.into(), *v));
+        let key = self.0.insert(VariableContraints::new(
+            universe_range,
+            start_term_coords,
+            terms.len(),
+        ));
 
         Variable(key, PhantomData)
     }
@@ -70,12 +72,13 @@ struct VariableContraints<T> {
     terms: HashMap<T, Vec<f32>>,
 }
 
-impl<T: Terms> VariableContraints<T> {
-    pub fn new(
+impl<T: Terms + std::fmt::Debug> VariableContraints<T> {
+    fn new<'t>(
         universe_range: RangeInclusive<f32>,
-        start_term_coords: impl IntoIterator<Item = (T, &'static [(f32, f32)])> + ExactSizeIterator,
+        start_term_coords: impl IntoIterator<Item = (T, &'t [(f32, f32)])>,
+        n_terms: usize,
     ) -> Self {
-        // REVIEW: This is an opt param in the original
+        // TODO: This is an opt param in the original
         let step = 0.1;
         let min_u = *universe_range.start();
         let max_u = *universe_range.end();
@@ -83,11 +86,12 @@ impl<T: Terms> VariableContraints<T> {
         // where the decimals are really long: int(4.999999999999999999) == 5
         let num = ((max_u - min_u) / step).floor() as usize + 1;
         let universe = Linspace::new(min_u, max_u, num).collect();
+        // dbg!(&universe);
         let mut this = Self {
             universe,
             min_u,
             max_u,
-            terms: HashMap::with_capacity(start_term_coords.len()),
+            terms: HashMap::with_capacity(n_terms),
         };
 
         // Load from tuple?
@@ -97,11 +101,17 @@ impl<T: Terms> VariableContraints<T> {
         } else {
             for (term, membership) in start_term_coords {
                 let xp = membership.iter().map(|(xp, _)| *xp);
+                // dbg!(term);
+                // dbg!(membership.iter().map(|(xp, _)| *xp).collect::<Vec<_>>());
+                // dbg!(membership.iter().map(|(_, fp)| *fp).collect::<Vec<_>>());
+                // dbg!("Before:", &this.universe);
                 this.add_points_to_universe(xp);
                 this.terms.insert(
                     term,
                     interp(this.universe.iter().copied(), membership.iter().copied()),
                 );
+                // dbg!("After:", &this.universe);
+                // dbg!(&this.terms[&term]);
             }
         }
 
@@ -113,6 +123,8 @@ impl<T: Terms> VariableContraints<T> {
         // Adds new points to the universe
         let iter = points.into_iter().map(|p| p.clamp(self.min_u, self.max_u));
         let mut universe: Vec<_> = self.universe.iter().copied().chain(iter).collect();
+
+        // dbg!(&universe);
 
         universe.sort_unstable_by(|a, b| a.partial_cmp(b).expect("not to find unsortable floats"));
         universe.dedup();
@@ -145,17 +157,14 @@ impl<T: Terms> VariableContraints<T> {
 }
 
 #[derive(Default)]
-pub struct Rules<T, O>(Vec<Rule<T, O>>);
+pub struct Rules<T>(Vec<Rule<T>>);
 
-impl<T: Terms, O> Rules<T, O> {
+impl<T: Terms> Rules<T> {
     pub fn new() -> Self {
         Rules(Vec::new())
     }
 
-    pub fn add(&mut self, premise: Expr<T>, consequence: O)
-    where
-        O: Into<T>,
-    {
+    pub fn add(&mut self, premise: Expr<T>, consequence: Expr<T>) {
         self.0.push(Rule {
             premise,
             consequence,
@@ -166,18 +175,16 @@ impl<T: Terms, O> Rules<T, O> {
     }
 }
 
-struct Rule<T, O> {
+struct Rule<T> {
     // TODO: Rename to condition
     premise: Expr<T>,
     // TODO: Rename to result or output
-    consequence: O,
+    consequence: Expr<T>,
     cf: f32,
     threshold_cf: f32,
 }
 
-pub trait Terms: Copy + Eq + Hash + Sized {
-    fn values(&self) -> &'static [(f32, f32)];
-}
+pub trait Terms: Copy + Eq + Hash + Sized {}
 
 #[derive(Default)]
 pub struct Inputs(HashMap<VariableKey, f32>);
@@ -195,7 +202,7 @@ impl Inputs {
 
 // TODO: Might map to Fact eventually?
 #[derive(Debug)]
-pub struct Outputs(HashMap<VariableKey, f32>);
+pub struct Outputs(HashMap<VariableKey, f32>, f32);
 
 enum Fact {
     Crisp(f32),
@@ -564,10 +571,10 @@ impl DecompInference {
 
     // TODO: Maybe can make vars and rules immutable if they're just starting state
     // and everything else is calculated here
-    pub fn eval<'r, T: Terms, O: Into<T>>(
+    pub fn eval<'r, T: Terms + std::fmt::Debug>(
         &self,
         vars: &mut Variables<T>,
-        rules: &'r Rules<T, O>,
+        rules: &'r Rules<T>,
         inputs: &Inputs,
     ) -> Outputs {
         // Convert Inputs to facts
@@ -618,18 +625,21 @@ impl DecompInference {
 
             for (var_key, term, modifiers) in premise.propositions() {
                 let membership = vars.0[var_key].get_modified_membership(term, modifiers);
+                // dbg!((term, i, membership));
                 modified_premise_memberships.insert((i, var_key), membership);
             }
         }
+
+        // dbg!(&modified_premise_memberships);
 
         // Compute Modified Consequence Memberships
         let mut modified_consequence_memberships = HashMap::new();
 
         // TODO: Can probably move the inner loop into the previous section's loop
         for (i, rule) in rules.0.iter().enumerate() {
-            let premise = &rule.premise;
+            let consequence = &rule.consequence;
 
-            for (var_key, term, modifiers) in premise.propositions() {
+            for (var_key, term, modifiers) in consequence.propositions() {
                 let membership = vars.0[var_key].get_modified_membership(term, modifiers);
                 modified_consequence_memberships.insert((i, var_key), membership);
             }
@@ -884,13 +894,15 @@ impl DecompInference {
             }
         }
 
-        Outputs(defuzzificated_infered_memberships)
+        Outputs(defuzzificated_infered_memberships, final_inferred_cf)
     }
 }
 
 #[test]
 fn test_bank_loan() {
-    #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    use fixed_map::Key as FixedKey;
+
+    #[derive(Clone, Copy, Debug, Eq, FixedKey, Hash, Ord, PartialEq, PartialOrd)]
     enum Score {
         High,
         Low,
@@ -902,7 +914,7 @@ fn test_bank_loan() {
         }
     }
 
-    #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[derive(Clone, Copy, Debug, Eq, FixedKey, Hash, Ord, PartialEq, PartialOrd)]
     enum Ratio {
         Good,
         Bad,
@@ -914,7 +926,7 @@ fn test_bank_loan() {
         }
     }
 
-    #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[derive(Clone, Copy, Debug, Eq, FixedKey, Hash, Ord, PartialEq, PartialOrd)]
     enum Credit {
         Good,
         Bad,
@@ -926,7 +938,7 @@ fn test_bank_loan() {
         }
     }
 
-    #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[derive(Clone, Copy, Debug, Eq, FixedKey, Hash, Ord, PartialEq, PartialOrd)]
     enum Decision {
         Approve,
         Reject,
@@ -938,7 +950,7 @@ fn test_bank_loan() {
         }
     }
 
-    #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
     enum VarTerms {
         Score(Score),
         Ratio(Ratio),
@@ -970,48 +982,74 @@ fn test_bank_loan() {
         }
     }
 
-    impl Terms for VarTerms {
-        // TODO: These shouldn't be static
-        fn values(&self) -> &'static [(f32, f32)] {
-            match self {
-                Self::Score(Score::High) => &[(175., 0.), (180., 0.2), (185., 0.7), (190., 1.)],
-                Self::Score(Score::Low) => &[
-                    (155., 1.),
-                    (160., 0.8),
-                    (165., 0.5),
-                    (170., 0.2),
-                    (175., 0.),
-                ],
-                Self::Ratio(Ratio::Good) => &[(0.3, 1.), (0.4, 0.7), (0.41, 0.3), (0.42, 0.)],
-                Self::Ratio(Ratio::Bad) => &[(0.44, 0.), (0.45, 0.3), (0.5, 0.7), (0.7, 1.)],
-                Self::Credit(Credit::Good) => &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
-                Self::Credit(Credit::Bad) => &[(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)],
-                Self::Decision(Decision::Approve) => &[(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)],
-                Self::Decision(Decision::Reject) => &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
-            }
-        }
-    }
+    impl Terms for VarTerms {}
 
     // TODO: The above lines should all be compressed into a macro_rules macro
 
+    let mut score_terms = FixedMap::new();
+    let mut ratio_terms = FixedMap::new();
+    let mut credit_terms = FixedMap::new();
+    let mut decision_terms = FixedMap::new();
+
+    score_terms.insert(
+        Score::High,
+        &[(175.0f32, 0.0f32), (180., 0.2), (185., 0.7), (190., 1.)] as &[_],
+    );
+    score_terms.insert(
+        Score::Low,
+        &[
+            (155.0f32, 1.0f32),
+            (160., 0.8),
+            (165., 0.5),
+            (170., 0.2),
+            (175., 0.),
+        ],
+    );
+    ratio_terms.insert(
+        Ratio::Good,
+        &[(0.3f32, 1.0f32), (0.4, 0.7), (0.41, 0.3), (0.42, 0.)] as &[_],
+    );
+    ratio_terms.insert(
+        Ratio::Bad,
+        &[(0.44, 0.), (0.45, 0.3), (0.5, 0.7), (0.7, 1.)],
+    );
+    credit_terms.insert(
+        Credit::Good,
+        &[(2.0f32, 1.0f32), (3., 0.7), (4., 0.3), (5., 0.)] as &[_],
+    );
+    credit_terms.insert(Credit::Bad, &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)]);
+    decision_terms.insert(
+        Decision::Approve,
+        &[(5.0f32, 0.0f32), (6., 0.3), (7., 0.7), (8., 1.)] as &[_],
+    );
+    decision_terms.insert(
+        Decision::Reject,
+        &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)],
+    );
+
     let mut vars = Variables::<VarTerms>::new();
-    let score = vars.add::<Score>(150. ..=200.);
-    let ratio = vars.add::<Ratio>(0.1..=1.);
-    let credit = vars.add::<Credit>(0. ..=10.);
-    // let decision = vars.add::<Decision>(0. ..=10., ZeroOne(1.));
+    let score = vars.add(150. ..=200., score_terms);
+    let ratio = vars.add(0.1..=1., ratio_terms);
+    let credit = vars.add(0. ..=10., credit_terms);
+    let decision = vars.add(0. ..=10., decision_terms);
     let mut rules = Rules::new();
+
+    // dbg!(("Score", score.0));
+    // dbg!(("Ratio", ratio.0));
+    // dbg!(("Credit", credit.0));
 
     rules.add(
         score
             .is(Score::High)
             .and2(ratio.is(Ratio::Good), credit.is(Credit::Good)),
-        Decision::Approve,
+        decision.is(Decision::Approve),
     );
     rules.add(
         score
             .is(Score::Low)
-            .and(ratio.is(Ratio::Bad).or(credit.is(Credit::Bad))),
-        Decision::Reject,
+            .and(ratio.is(Ratio::Bad))
+            .or(credit.is(Credit::Bad)),
+        decision.is(Decision::Reject),
     );
 
     let mut inputs = Inputs::new();
@@ -1030,4 +1068,6 @@ fn test_bank_loan() {
     );
 
     let output = model.eval(&mut vars, &rules, &inputs);
+
+    dbg!(&output);
 }
