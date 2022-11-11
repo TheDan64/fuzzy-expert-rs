@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::ops::RangeInclusive;
+use std::ops::{AddAssign, RangeInclusive};
+use std::{collections::HashMap, iter::Sum};
 
 use num::Float;
 use slotmap::{new_key_type, SlotMap};
@@ -193,6 +193,10 @@ impl Inputs {
     }
 }
 
+// TODO: Might map to Fact eventually?
+#[derive(Debug)]
+pub struct Outputs(HashMap<VariableKey, f32>);
+
 enum Fact {
     Crisp(f32),
     Fuzzy(Vec<(f32, ZeroOne)>),
@@ -349,6 +353,7 @@ impl ImplicationOp {
 }
 
 /// Method for aggregating the consequences of the fuzzy rules
+#[derive(Clone, Copy, Debug)]
 pub enum ProductionLink {
     Min,
     Prod,
@@ -398,6 +403,7 @@ impl ProductionLink {
 }
 
 /// Method for defuzzifcating the resulting membership function.
+#[derive(Clone, Copy, Debug)]
 pub enum DefuzzificationOp {
     /// Center of Gravity
     Cog,
@@ -409,6 +415,123 @@ pub enum DefuzzificationOp {
     Lom,
     /// Smallest value for which the membership function is minimum
     Som,
+}
+
+impl DefuzzificationOp {
+    pub fn call<F: Float + Sum + AddAssign>(self, universe: &[F], membership: &[F]) -> F {
+        match self {
+            Self::Cog => {
+                let n_areas = universe.len() - 1;
+                let mut areas = Vec::with_capacity(n_areas);
+                let mut centroids = Vec::with_capacity(n_areas);
+                let two = F::one() + F::one();
+                let three = two + F::one();
+
+                for i in 0..n_areas {
+                    let base = universe[i + 1] - universe[i];
+                    let area_rect = F::min(membership[i], membership[i + 1]) * base;
+                    let center_rect = universe[i] + base / two;
+                    let (area_tria, center_tri) = if membership[i + 1] == membership[i] {
+                        (F::zero(), F::zero())
+                    } else if membership[i + 1] > membership[i] {
+                        (
+                            base * F::abs(membership[i + 1] - membership[i]) / two,
+                            universe[i] + two / three * base,
+                        )
+                    } else {
+                        (
+                            base * F::abs(membership[i + 1] - membership[i]) / two,
+                            universe[i] + F::one() / three * base,
+                        )
+                    };
+                    let area = area_rect + area_tria;
+                    let center = if area == F::zero() {
+                        F::zero()
+                    } else {
+                        (area_rect * center_rect + area_tria * center_tri) / (area_rect + area_tria)
+                    };
+
+                    areas.push(area);
+                    centroids.push(center);
+                }
+
+                let den = areas.iter().copied().sum::<F>();
+                let num = areas
+                    .into_iter()
+                    .zip(centroids.into_iter())
+                    .map(|(area, cent)| area * cent)
+                    .sum::<F>();
+
+                num / den
+            }
+            Self::Boa => {
+                let n_areas = universe.len() - 1;
+                let mut areas = Vec::with_capacity(n_areas);
+
+                for i_area in 0..n_areas {
+                    let base = universe[i_area + 1] - universe[i_area];
+                    let area = (membership[i_area] + membership[i_area + 1]) * base
+                        / F::from(2.).expect("unreachable");
+                    areas.push(area);
+                }
+
+                let total_area = areas.iter().copied().sum::<F>();
+                let target = total_area / F::from(2.).expect("unreachable");
+                let mut cum_area = F::zero();
+                let mut i_area = 0;
+
+                for i in 0..=n_areas {
+                    cum_area += areas[i];
+                    i_area = i;
+                    if cum_area >= target {
+                        break;
+                    }
+                }
+
+                let xp = [universe[i_area], universe[i_area + 1]];
+                let fp = [cum_area - areas[i_area], cum_area];
+
+                interp(Some(target), xp.into_iter().zip(fp.into_iter()))
+                    .into_iter()
+                    .next()
+                    .expect("unreachable")
+            }
+            Self::Mom => {
+                let maximum = membership.iter().copied().reduce(F::max).unwrap();
+                let (len, sum) = universe
+                    .iter()
+                    .copied()
+                    .zip(membership.iter().copied())
+                    .filter_map(|(u, m)| if m == maximum { Some(u) } else { None })
+                    .enumerate()
+                    .fold((0usize, F::zero()), |(_i, accum), (i, next)| {
+                        (i + 1, accum + next)
+                    });
+
+                sum / F::from(len).unwrap()
+            }
+            Self::Lom => {
+                let maximum = membership.iter().copied().reduce(F::max).unwrap();
+                universe
+                    .iter()
+                    .copied()
+                    .zip(membership.iter().copied())
+                    .filter_map(|(u, m)| if m == maximum { Some(u) } else { None })
+                    .reduce(F::max)
+                    .unwrap()
+            }
+            Self::Som => {
+                let maximum = membership.iter().copied().reduce(F::max).unwrap();
+                universe
+                    .iter()
+                    .copied()
+                    .zip(membership.iter().copied())
+                    .filter_map(|(u, m)| if m == maximum { Some(u) } else { None })
+                    .reduce(F::min)
+                    .unwrap()
+            }
+        }
+    }
 }
 
 pub struct DecompInference {
@@ -446,7 +569,7 @@ impl DecompInference {
         vars: &mut Variables<T>,
         rules: &'r Rules<T, O>,
         inputs: &Inputs,
-    ) -> &'r O {
+    ) -> Outputs {
         // Convert Inputs to facts
         // Converts input values to FIS facts
         let mut fact_value = HashMap::with_capacity(inputs.0.len());
@@ -709,15 +832,59 @@ impl DecompInference {
             }
         }
 
-        // TODO: Aggregate Collected Memberships
-        // let mut aggregated_memberships = HashMap::new();
+        // Aggregate Collected Memberships
+        let mut aggregated_memberships = HashMap::new();
 
-        // TODO: Aggregate Production CF
+        for (var_key, memberships) in collected_rule_memberships {
+            let mut agg = Vec::new();
 
-        // TODO: Defuzzificate
+            for window in memberships.windows(2) {
+                match &agg[..] {
+                    [] => {
+                        agg = self
+                            .prod_link
+                            .call(window[0].iter().copied(), window[1].iter().copied())
+                            .into_iter()
+                            .collect();
+                    }
+                    [..] => {
+                        agg = self
+                            .prod_link
+                            .call(agg, window[1].iter().copied())
+                            .into_iter()
+                            .collect();
+                    }
+                }
+            }
 
-        // Placeholder
-        &rules.0[0].consequence
+            aggregated_memberships.insert(var_key, agg);
+        }
+
+        let mut final_inferred_cf = 0.;
+
+        // Aggregate Production CF
+        for (i, _rule) in rules.0.iter().enumerate() {
+            final_inferred_cf = f32::max(final_inferred_cf, inferred_cf[&i]);
+        }
+
+        // Defuzzificate
+        let mut defuzzificated_infered_memberships = HashMap::new();
+
+        for (var_key, aggregated_membership) in aggregated_memberships {
+            let var = &vars.0[var_key];
+
+            if aggregated_membership.iter().copied().sum::<f32>() == 0. {
+                let mean = var.universe.iter().copied().sum::<f32>() / var.universe.len() as f32;
+
+                defuzzificated_infered_memberships.insert(var_key, mean);
+            } else {
+                let defuzzed = self.defuzz_op.call(&var.universe, &aggregated_membership);
+
+                defuzzificated_infered_memberships.insert(var_key, defuzzed);
+            }
+        }
+
+        Outputs(defuzzificated_infered_memberships)
     }
 }
 
@@ -804,6 +971,7 @@ fn test_bank_loan() {
     }
 
     impl Terms for VarTerms {
+        // TODO: These shouldn't be static
         fn values(&self) -> &'static [(f32, f32)] {
             match self {
                 Self::Score(Score::High) => &[(175., 0.), (180., 0.2), (185., 0.7), (190., 1.)],
@@ -861,5 +1029,5 @@ fn test_bank_loan() {
         DefuzzificationOp::Cog,
     );
 
-    model.eval(&mut vars, &rules, &inputs);
+    let output = model.eval(&mut vars, &rules, &inputs);
 }
