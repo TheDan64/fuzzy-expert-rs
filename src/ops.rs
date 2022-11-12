@@ -250,15 +250,16 @@ impl DefuzzificationOp {
             Self::Boa => {
                 let n_areas = universe.len() - 1;
                 let mut areas = Vec::with_capacity(n_areas);
+                let two = F::one() + F::one();
 
                 for i_area in 0..n_areas {
                     let base = universe[i_area + 1] - universe[i_area];
-                    let area = (membership[i_area] + membership[i_area + 1]) * base / F::from(2.).expect("unreachable");
+                    let area = (membership[i_area] + membership[i_area + 1]) * base / two;
                     areas.push(area);
                 }
 
                 let total_area = areas.iter().copied().sum::<F>();
-                let target = total_area / F::from(2.).expect("unreachable");
+                let target = total_area / two;
                 let mut cum_area = F::zero();
                 let mut i_area = 0;
 
