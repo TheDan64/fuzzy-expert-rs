@@ -1,15 +1,15 @@
 pub struct Linspace {
-    start: f32,
-    step: f32,
+    start: f64,
+    step: f64,
     index: usize,
     len: usize,
 }
 
 impl Linspace {
-    pub fn new(min: f32, max: f32, n: usize) -> Self {
+    pub fn new(min: f64, max: f64, n: usize) -> Self {
         let step = if n > 1 {
             // REVIEW: try_from instead of cast?
-            let num_steps = (n - 1) as f32;
+            let num_steps = (n - 1) as f64;
             (max - min) / num_steps
         } else {
             0.
@@ -24,10 +24,10 @@ impl Linspace {
 }
 
 impl Iterator for Linspace {
-    type Item = f32;
+    type Item = f64;
 
     #[inline]
-    fn next(&mut self) -> Option<f32> {
+    fn next(&mut self) -> Option<f64> {
         if self.index >= self.len {
             None
         } else {
@@ -35,7 +35,7 @@ impl Iterator for Linspace {
             let i = self.index;
             self.index += 1;
             // REVIEW: try_from instead of cast?
-            Some(self.start + self.step * i as f32)
+            Some(self.start + self.step * i as f64)
         }
     }
 

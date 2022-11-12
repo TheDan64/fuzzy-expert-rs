@@ -18,16 +18,11 @@ use math::{interp, meshgrid, Axis, CollectMatrix, Matrix};
 
 /// A value between zero and one
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
-pub struct ZeroOne(f32);
+pub struct ZeroOne(f64);
 
 new_key_type! {
     /// A variable key
     pub struct VariableKey;
-}
-
-// REVIEW: Is this trait necessary anymore?
-pub trait Variants: Sized + Copy {
-    fn variants() -> &'static [Self];
 }
 
 pub struct Variable<I>(VariableKey, PhantomData<I>);
@@ -44,15 +39,15 @@ impl<I> Copy for Variable<I> {}
 #[derive(Default)]
 pub struct Variables<T>(SlotMap<VariableKey, VariableContraints<T>>);
 
-impl<T: Terms + std::fmt::Debug> Variables<T> {
+impl<T: Eq + Hash> Variables<T> {
     pub fn new() -> Self {
         Self(SlotMap::with_key())
     }
 
-    pub fn add<I: Into<T> + FixedKey + Variants + 'static + std::fmt::Debug>(
+    pub fn add<I: Into<T> + FixedKey + 'static>(
         &mut self,
-        universe_range: RangeInclusive<f32>,
-        terms: FixedMap<I, &[(f32, f32)]>,
+        universe_range: RangeInclusive<f64>,
+        terms: FixedMap<I, &[(f64, f64)]>,
     ) -> Variable<I> {
         let start_term_coords = terms.iter().map(|(k, v)| (k.into(), *v));
         let key = self.0.insert(VariableContraints::new(
@@ -66,16 +61,16 @@ impl<T: Terms + std::fmt::Debug> Variables<T> {
 }
 
 struct VariableContraints<T> {
-    universe: Vec<f32>,
-    min_u: f32,
-    max_u: f32,
-    terms: HashMap<T, Vec<f32>>,
+    universe: Vec<f64>,
+    min_u: f64,
+    max_u: f64,
+    terms: HashMap<T, Vec<f64>>,
 }
 
-impl<T: Terms + std::fmt::Debug> VariableContraints<T> {
+impl<T: Eq + Hash> VariableContraints<T> {
     fn new<'t>(
-        universe_range: RangeInclusive<f32>,
-        start_term_coords: impl IntoIterator<Item = (T, &'t [(f32, f32)])>,
+        universe_range: RangeInclusive<f64>,
+        start_term_coords: impl IntoIterator<Item = (T, &'t [(f64, f64)])>,
         n_terms: usize,
     ) -> Self {
         // TODO: This is an opt param in the original
@@ -86,7 +81,6 @@ impl<T: Terms + std::fmt::Debug> VariableContraints<T> {
         // where the decimals are really long: int(4.999999999999999999) == 5
         let num = ((max_u - min_u) / step).floor() as usize + 1;
         let universe = Linspace::new(min_u, max_u, num).collect();
-        // dbg!(&universe);
         let mut this = Self {
             universe,
             min_u,
@@ -101,17 +95,11 @@ impl<T: Terms + std::fmt::Debug> VariableContraints<T> {
         } else {
             for (term, membership) in start_term_coords {
                 let xp = membership.iter().map(|(xp, _)| *xp);
-                // dbg!(term);
-                // dbg!(membership.iter().map(|(xp, _)| *xp).collect::<Vec<_>>());
-                // dbg!(membership.iter().map(|(_, fp)| *fp).collect::<Vec<_>>());
-                // dbg!("Before:", &this.universe);
                 this.add_points_to_universe(xp);
                 this.terms.insert(
                     term,
                     interp(this.universe.iter().copied(), membership.iter().copied()),
                 );
-                // dbg!("After:", &this.universe);
-                // dbg!(&this.terms[&term]);
             }
         }
 
@@ -119,12 +107,10 @@ impl<T: Terms + std::fmt::Debug> VariableContraints<T> {
     }
 
     // TODO: Try and make VariableContraints immutable?
-    fn add_points_to_universe(&mut self, points: impl IntoIterator<Item = f32>) {
+    fn add_points_to_universe(&mut self, points: impl IntoIterator<Item = f64>) {
         // Adds new points to the universe
         let iter = points.into_iter().map(|p| p.clamp(self.min_u, self.max_u));
         let mut universe: Vec<_> = self.universe.iter().copied().chain(iter).collect();
-
-        // dbg!(&universe);
 
         universe.sort_unstable_by(|a, b| a.partial_cmp(b).expect("not to find unsortable floats"));
         universe.dedup();
@@ -147,7 +133,7 @@ impl<T: Terms + std::fmt::Debug> VariableContraints<T> {
     }
 
     #[allow(clippy::let_and_return)]
-    fn get_modified_membership(&self, term: &T, _modifiers: &[()]) -> &[f32] {
+    fn get_modified_membership(&self, term: &T, _modifiers: &[()]) -> &[f64] {
         let membership = &self.terms[term];
 
         // TODO: Apply modifiers
@@ -159,11 +145,13 @@ impl<T: Terms + std::fmt::Debug> VariableContraints<T> {
 #[derive(Default)]
 pub struct Rules<T>(Vec<Rule<T>>);
 
-impl<T: Terms> Rules<T> {
+impl<T> Rules<T> {
     pub fn new() -> Self {
         Rules(Vec::new())
     }
 
+    // REVIEW: Maybe consequence should be (Variable<I>, T) so we can manually
+    // turn it into Expr::Is(VariableKey, T)?
     pub fn add(&mut self, premise: Expr<T>, consequence: Expr<T>) {
         self.0.push(Rule {
             premise,
@@ -180,33 +168,31 @@ struct Rule<T> {
     premise: Expr<T>,
     // TODO: Rename to result or output
     consequence: Expr<T>,
-    cf: f32,
-    threshold_cf: f32,
+    cf: f64,
+    threshold_cf: f64,
 }
 
-pub trait Terms: Copy + Eq + Hash + Sized {}
-
 #[derive(Default)]
-pub struct Inputs(HashMap<VariableKey, f32>);
+pub struct Inputs(HashMap<VariableKey, f64>);
 
 impl Inputs {
     pub fn new() -> Self {
         Inputs(HashMap::new())
     }
 
-    // TODO: K: VariableKind {Crisp, Fuzzy}, val: K::Value {f32, Vec<(f32, f32)>}
-    pub fn add<I>(&mut self, var: Variable<I>, val: f32) {
+    // TODO: K: VariableKind {Crisp, Fuzzy}, val: K::Value {f64, Vec<(f64, f64)>}
+    pub fn add<I>(&mut self, var: Variable<I>, val: f64) {
         self.0.insert(var.0, val);
     }
 }
 
 // TODO: Might map to Fact eventually?
 #[derive(Debug)]
-pub struct Outputs(HashMap<VariableKey, f32>, f32);
+pub struct Outputs(HashMap<VariableKey, f64>, f64);
 
 enum Fact {
-    Crisp(f32),
-    Fuzzy(Vec<(f32, ZeroOne)>),
+    Crisp(f64),
+    Fuzzy(Vec<(f64, ZeroOne)>),
 }
 
 /// And operator method for combining the compositions of propositions
@@ -571,7 +557,7 @@ impl DecompInference {
 
     // TODO: Maybe can make vars and rules immutable if they're just starting state
     // and everything else is calculated here
-    pub fn eval<'r, T: Terms + std::fmt::Debug>(
+    pub fn eval<'r, T: Eq + Hash>(
         &self,
         vars: &mut Variables<T>,
         rules: &'r Rules<T>,
@@ -605,7 +591,7 @@ impl DecompInference {
                     key,
                     var.universe
                         .iter()
-                        .map(|u| if *u == fact_value { 1.0f32 } else { 0. })
+                        .map(|u| if *u == fact_value { 1.0f64 } else { 0. })
                         .collect::<Vec<_>>(),
                 );
                 // fact_types.insert(key, "Crisp");
@@ -625,12 +611,9 @@ impl DecompInference {
 
             for (var_key, term, modifiers) in premise.propositions() {
                 let membership = vars.0[var_key].get_modified_membership(term, modifiers);
-                // dbg!((term, i, membership));
                 modified_premise_memberships.insert((i, var_key), membership);
             }
         }
-
-        // dbg!(&modified_premise_memberships);
 
         // Compute Modified Consequence Memberships
         let mut modified_consequence_memberships = HashMap::new();
@@ -790,20 +773,20 @@ impl DecompInference {
         let mut inferred_cf = HashMap::new();
 
         for (i, rule) in rules.0.iter().enumerate() {
-            fn calc_cf<T>(expr: &Expr<T>, fact_cf: &HashMap<VariableKey, f32>) -> f32 {
+            fn calc_cf<T>(expr: &Expr<T>, fact_cf: &HashMap<VariableKey, f64>) -> f64 {
                 match expr {
                     Expr::Is(var_key, _) => fact_cf[var_key],
                     Expr::And(expr, expr2) => {
                         let left = calc_cf(expr, fact_cf);
                         let right = calc_cf(expr2, fact_cf);
 
-                        f32::min(left, right)
+                        f64::min(left, right)
                     }
                     Expr::Or(expr, expr2) => {
                         let left = calc_cf(expr, fact_cf);
                         let right = calc_cf(expr2, fact_cf);
 
-                        f32::max(left, right)
+                        f64::max(left, right)
                     }
                 }
             }
@@ -825,8 +808,8 @@ impl DecompInference {
                 // REVIEW: Is this even necessary?
                 // if !collected_rule_memberships.contains_key(var_key) {
                 //     let universe = &vars.0[*var_key].universe;
-                //     let min = universe.iter().copied().reduce(f32::min).unwrap();
-                //     let max = universe.iter().copied().reduce(f32::max).unwrap();
+                //     let min = universe.iter().copied().reduce(f64::min).unwrap();
+                //     let max = universe.iter().copied().reduce(f64::max).unwrap();
                 //     let mut var = VariableContraints::<T>::new(min..=max, std::iter::empty());
                 //     var.universe = universe.clone();
 
@@ -874,7 +857,7 @@ impl DecompInference {
 
         // Aggregate Production CF
         for (i, _rule) in rules.0.iter().enumerate() {
-            final_inferred_cf = f32::max(final_inferred_cf, inferred_cf[&i]);
+            final_inferred_cf = f64::max(final_inferred_cf, inferred_cf[&i]);
         }
 
         // Defuzzificate
@@ -883,8 +866,8 @@ impl DecompInference {
         for (var_key, aggregated_membership) in aggregated_memberships {
             let var = &vars.0[var_key];
 
-            if aggregated_membership.iter().copied().sum::<f32>() == 0. {
-                let mean = var.universe.iter().copied().sum::<f32>() / var.universe.len() as f32;
+            if aggregated_membership.iter().copied().sum::<f64>() == 0. {
+                let mean = var.universe.iter().copied().sum::<f64>() / var.universe.len() as f64;
 
                 defuzzificated_infered_memberships.insert(var_key, mean);
             } else {
@@ -908,22 +891,10 @@ fn test_bank_loan() {
         Low,
     }
 
-    impl Variants for Score {
-        fn variants() -> &'static [Self] {
-            &[Self::High, Self::Low]
-        }
-    }
-
     #[derive(Clone, Copy, Debug, Eq, FixedKey, Hash, Ord, PartialEq, PartialOrd)]
     enum Ratio {
         Good,
         Bad,
-    }
-
-    impl Variants for Ratio {
-        fn variants() -> &'static [Self] {
-            &[Self::Good, Self::Bad]
-        }
     }
 
     #[derive(Clone, Copy, Debug, Eq, FixedKey, Hash, Ord, PartialEq, PartialOrd)]
@@ -932,22 +903,10 @@ fn test_bank_loan() {
         Bad,
     }
 
-    impl Variants for Credit {
-        fn variants() -> &'static [Self] {
-            &[Self::Good, Self::Bad]
-        }
-    }
-
     #[derive(Clone, Copy, Debug, Eq, FixedKey, Hash, Ord, PartialEq, PartialOrd)]
     enum Decision {
         Approve,
         Reject,
-    }
-
-    impl Variants for Decision {
-        fn variants() -> &'static [Self] {
-            &[Self::Approve, Self::Reject]
-        }
     }
 
     #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -982,8 +941,6 @@ fn test_bank_loan() {
         }
     }
 
-    impl Terms for VarTerms {}
-
     // TODO: The above lines should all be compressed into a macro_rules macro
 
     let mut score_terms = FixedMap::new();
@@ -993,12 +950,12 @@ fn test_bank_loan() {
 
     score_terms.insert(
         Score::High,
-        &[(175.0f32, 0.0f32), (180., 0.2), (185., 0.7), (190., 1.)] as &[_],
+        &[(175.0f64, 0.0f64), (180., 0.2), (185., 0.7), (190., 1.)] as &[_],
     );
     score_terms.insert(
         Score::Low,
         &[
-            (155.0f32, 1.0f32),
+            (155.0f64, 1.0f64),
             (160., 0.8),
             (165., 0.5),
             (170., 0.2),
@@ -1007,7 +964,7 @@ fn test_bank_loan() {
     );
     ratio_terms.insert(
         Ratio::Good,
-        &[(0.3f32, 1.0f32), (0.4, 0.7), (0.41, 0.3), (0.42, 0.)] as &[_],
+        &[(0.3f64, 1.0f64), (0.4, 0.7), (0.41, 0.3), (0.42, 0.)] as &[_],
     );
     ratio_terms.insert(
         Ratio::Bad,
@@ -1015,12 +972,12 @@ fn test_bank_loan() {
     );
     credit_terms.insert(
         Credit::Good,
-        &[(2.0f32, 1.0f32), (3., 0.7), (4., 0.3), (5., 0.)] as &[_],
+        &[(2.0f64, 1.0f64), (3., 0.7), (4., 0.3), (5., 0.)] as &[_],
     );
-    credit_terms.insert(Credit::Bad, &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)]);
+    credit_terms.insert(Credit::Bad, &[(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)]);
     decision_terms.insert(
         Decision::Approve,
-        &[(5.0f32, 0.0f32), (6., 0.3), (7., 0.7), (8., 1.)] as &[_],
+        &[(5.0f64, 0.0f64), (6., 0.3), (7., 0.7), (8., 1.)] as &[_],
     );
     decision_terms.insert(
         Decision::Reject,
@@ -1033,10 +990,6 @@ fn test_bank_loan() {
     let credit = vars.add(0. ..=10., credit_terms);
     let decision = vars.add(0. ..=10., decision_terms);
     let mut rules = Rules::new();
-
-    // dbg!(("Score", score.0));
-    // dbg!(("Ratio", ratio.0));
-    // dbg!(("Credit", credit.0));
 
     rules.add(
         score
@@ -1067,7 +1020,8 @@ fn test_bank_loan() {
         DefuzzificationOp::Cog,
     );
 
-    let output = model.eval(&mut vars, &rules, &inputs);
+    let outputs = model.eval(&mut vars, &rules, &inputs);
 
-    dbg!(&output);
+    assert_eq!(outputs.0[&decision.0], 8.010492631084489);
+    assert_eq!(outputs.1, 1.);
 }

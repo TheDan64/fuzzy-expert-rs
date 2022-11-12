@@ -165,6 +165,16 @@ fn test_interp() {
     let ys = [0., 2., 5., 3., 2.];
 
     assert_eq!(interp(x, xs.into_iter().zip(ys.into_iter())), [4., 0., 2.]);
+
+    let universe = [
+        0.1, 0.2, 0.3, 0.3, 0.4, 0.41, 0.42, 0.44, 0.45, 0.5, 0.6, 0.7, 0.7, 0.8, 0.9, 1.,
+    ];
+    let membership = [(0.44, 0.), (0.45, 0.3), (0.5, 0.7), (0.7, 1.)];
+    let output = [
+        0., 0., 0., 0., 0., 0., 0., 0., 0.3, 0.7, 0.85, 1., 1., 1., 1., 1.,
+    ];
+
+    assert_eq!(interp(universe, membership), output);
 }
 
 #[test]
