@@ -328,28 +328,28 @@ impl DecompInference {
 
 #[test]
 fn test_bank_loan() {
-    use fixed_map::Key as FixedKey;
-    use fixed_map::Map as FixedMap;
+    use crate::prelude::Term;
+    use crate::terms::Terms;
 
-    #[derive(Clone, Copy, Debug, Eq, FixedKey, Hash, Ord, PartialEq, PartialOrd)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Term)]
     enum Score {
         High,
         Low,
     }
 
-    #[derive(Clone, Copy, Debug, Eq, FixedKey, Hash, Ord, PartialEq, PartialOrd)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Term)]
     enum Ratio {
         Good,
         Bad,
     }
 
-    #[derive(Clone, Copy, Debug, Eq, FixedKey, Hash, Ord, PartialEq, PartialOrd)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Term)]
     enum Credit {
         Good,
         Bad,
     }
 
-    #[derive(Clone, Copy, Debug, Eq, FixedKey, Hash, Ord, PartialEq, PartialOrd)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Term)]
     enum Decision {
         Approve,
         Reject,
@@ -389,10 +389,10 @@ fn test_bank_loan() {
 
     // TODO: The above lines should all be compressed into a macro_rules macro
 
-    let mut score_terms = FixedMap::new();
-    let mut ratio_terms = FixedMap::new();
-    let mut credit_terms = FixedMap::new();
-    let mut decision_terms = FixedMap::new();
+    let mut score_terms = Terms::new();
+    let mut ratio_terms = Terms::new();
+    let mut credit_terms = Terms::new();
+    let mut decision_terms = Terms::new();
 
     score_terms.insert(
         Score::High,

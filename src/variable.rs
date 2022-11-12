@@ -3,11 +3,11 @@ use std::marker::PhantomData;
 use std::{hash::Hash, ops::RangeInclusive};
 
 use fixed_map::key::Key as FixedKey;
-use fixed_map::Map as FixedMap;
 use slotmap::{new_key_type, SlotMap};
 
 use crate::linspace::Linspace;
 use crate::math::interp;
+use crate::terms::Terms;
 
 new_key_type! {
     /// A variable key
@@ -24,7 +24,6 @@ impl<I> Clone for Variable<I> {
 
 impl<I> Copy for Variable<I> {}
 
-// REVIEW: Is this really only input variables?
 #[derive(Default)]
 pub struct Variables<T>(pub(crate) SlotMap<VariableKey, VariableContraints<T>>);
 
@@ -36,12 +35,14 @@ impl<T: Eq + Hash> Variables<T> {
     pub fn add<I: Into<T> + FixedKey + 'static>(
         &mut self,
         universe_range: RangeInclusive<f64>,
-        terms: FixedMap<I, &[(f64, f64)]>,
+        terms: Terms<I>,
     ) -> Variable<I> {
-        let start_term_coords = terms.iter().map(|(k, v)| (k.into(), *v));
-        let key = self
-            .0
-            .insert(VariableContraints::new(universe_range, start_term_coords, terms.len()));
+        let start_term_coords = terms.0.iter().map(|(k, v)| (k.into(), *v));
+        let key = self.0.insert(VariableContraints::new(
+            universe_range,
+            start_term_coords,
+            terms.0.len(),
+        ));
 
         Variable(key, PhantomData)
     }

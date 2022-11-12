@@ -6,7 +6,17 @@ mod math;
 pub mod ops;
 pub mod outputs;
 pub mod rules;
+pub mod terms;
 pub mod variable;
+
+pub mod prelude {
+    pub use crate::inference::DecompInference;
+    pub use crate::ops::{AndOp, CompositionOp, DefuzzificationOp, ImplicationOp, OrOp, ProductionLink};
+    pub use crate::outputs::Outputs;
+    pub use crate::rules::Rules;
+    pub use crate::terms::{Term, Terms};
+    pub use crate::variable::{Variable, VariableKey};
+}
 
 /// A value between zero and one
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
