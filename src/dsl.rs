@@ -1,4 +1,4 @@
-use crate::{Variable, VariableKey};
+use crate::variable::{Variable, VariableKey};
 
 // TODO: Support modifiers
 // TODO: Return to And(Vec<Expr<T>>), Or(Vec<Expr<T>>),
@@ -31,7 +31,7 @@ impl<T> Expr<T> {
                 Expr::And(expr, expr2) | Expr::Or(expr, expr2) => {
                     parse(expr, out);
                     parse(expr2, out)
-                }
+                },
             }
         }
 

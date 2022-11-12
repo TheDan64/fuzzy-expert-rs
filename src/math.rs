@@ -29,31 +29,25 @@ impl<F> Matrix<F> {
 
 impl<F: Float> Matrix<F> {
     pub fn tile(&self, shape: (usize, usize)) -> Self {
-        repeat(
-            self.values
-                .iter()
-                .copied()
-                .flat_map(|f| repeat(f).take(shape.1)),
-        )
-        .take(shape.0)
-        .flatten()
-        .collect_matrix((self.shape.0 * shape.0, self.shape.1 * shape.1))
+        repeat(self.values.iter().copied().flat_map(|f| repeat(f).take(shape.1)))
+            .take(shape.0)
+            .flatten()
+            .collect_matrix((self.shape.0 * shape.0, self.shape.1 * shape.1))
     }
 
     pub fn max(&self, axis: Axis) -> Vec<F> {
         let base = self.values.iter().copied().chunks(self.shape.1);
 
         match axis {
-            Axis::Column => {
-                base.into_iter()
-                    .fold(vec![F::neg_infinity(); self.shape.1], |mut accum, next| {
-                        for (i, item) in next.enumerate() {
-                            accum[i] = F::max(accum[i], item);
-                        }
+            Axis::Column => base
+                .into_iter()
+                .fold(vec![F::neg_infinity(); self.shape.1], |mut accum, next| {
+                    for (i, item) in next.enumerate() {
+                        accum[i] = F::max(accum[i], item);
+                    }
 
-                        accum
-                    })
-            }
+                    accum
+                }),
             Axis::Row => base.into_iter().flat_map(|v| v.reduce(F::max)).collect(),
         }
     }
@@ -100,13 +94,7 @@ where
     let values = u.cycle().take(shape.0 * shape.1).collect();
     let values2 = v.flat_map(|v| repeat(v).take(shape.1)).collect();
 
-    (
-        Matrix { values, shape },
-        Matrix {
-            values: values2,
-            shape,
-        },
-    )
+    (Matrix { values, shape }, Matrix { values: values2, shape })
 }
 
 /// Similar to numpy.interp
@@ -170,9 +158,7 @@ fn test_interp() {
         0.1, 0.2, 0.3, 0.3, 0.4, 0.41, 0.42, 0.44, 0.45, 0.5, 0.6, 0.7, 0.7, 0.8, 0.9, 1.,
     ];
     let membership = [(0.44, 0.), (0.45, 0.3), (0.5, 0.7), (0.7, 1.)];
-    let output = [
-        0., 0., 0., 0., 0., 0., 0., 0., 0.3, 0.7, 0.85, 1., 1., 1., 1., 1.,
-    ];
+    let output = [0., 0., 0., 0., 0., 0., 0., 0., 0.3, 0.7, 0.85, 1., 1., 1., 1., 1.];
 
     assert_eq!(interp(universe, membership), output);
 }
@@ -198,8 +184,8 @@ fn test_tile() {
     assert_eq!(
         m2.values,
         [
-            1., 1., 1., 2., 2., 2., 3., 3., 3., 4., 4., 4., 5., 5., 5., 1., 1., 1., 2., 2., 2., 3.,
-            3., 3., 4., 4., 4., 5., 5., 5.
+            1., 1., 1., 2., 2., 2., 3., 3., 3., 4., 4., 4., 5., 5., 5., 1., 1., 1., 2., 2., 2., 3., 3., 3., 4., 4., 4.,
+            5., 5., 5.
         ]
     );
     assert_eq!(m2.shape(), (10, 3));
@@ -213,8 +199,8 @@ fn test_tile() {
     assert_eq!(
         m2.values,
         [
-            1., 1., 1., 1., 2., 2., 2., 2., 3., 3., 3., 3., 4., 4., 4., 4., 5., 5., 5., 5., 1., 1.,
-            1., 1., 2., 2., 2., 2., 3., 3., 3., 3., 4., 4., 4., 4., 5., 5., 5., 5.
+            1., 1., 1., 1., 2., 2., 2., 2., 3., 3., 3., 3., 4., 4., 4., 4., 5., 5., 5., 5., 1., 1., 1., 1., 2., 2., 2.,
+            2., 3., 3., 3., 3., 4., 4., 4., 4., 5., 5., 5., 5.
         ]
     );
     assert_eq!(m2.shape(), (10, 4));
