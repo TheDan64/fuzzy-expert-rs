@@ -1,7 +1,8 @@
 pub use fixed_map::key::Key as Term;
-pub use fixed_map::Key as Term;
+pub use fixed_map::Key;
 use fixed_map::Map as FixedMap;
 
+#[derive(Default)]
 pub struct Terms<'t, K: Term>(pub(crate) FixedMap<K, &'t [(f64, f64)]>);
 
 impl<'t, K: Term> Terms<'t, K> {

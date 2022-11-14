@@ -1,7 +1,11 @@
 [package]
 name = "fuzzy"
 version = "0.1.0"
+authors = ["Daniel Kolsoi <thadan64@gmail.com>"]
 edition = "2021"
+readme = "README.md"
+keywords = ["fuzzy", "logic", "mamdani"]
+license = "Apache-2.0"
 
 [dependencies]
 fixed-map = "0.8"

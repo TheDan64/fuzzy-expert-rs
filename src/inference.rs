@@ -53,6 +53,7 @@ impl DecompInference {
             fact_cf.insert(*key, 1.);
         }
 
+        // #1 slowest section
         // Fuzzificate Facts
         // Convert crisp facts to membership functions
         // let mut fact_types = HashMap::with_capacity(fact_value.len());
@@ -134,6 +135,7 @@ impl DecompInference {
             }
         }
 
+        // #2 slowest section
         // Compute Fuzzy Composition
         let mut fuzzy_compositions = HashMap::with_capacity(fuzzy_implications.len());
 
@@ -168,7 +170,7 @@ impl DecompInference {
         let mut combined_compositions = HashMap::new();
 
         for (i, rule) in rules.0.iter().enumerate() {
-            for (j, conseqence_name) in modified_consequence_memberships.keys() {
+            for (j, consequence_name) in modified_consequence_memberships.keys() {
                 if i != *j {
                     continue;
                 }
@@ -179,22 +181,22 @@ impl DecompInference {
                 fn combine<T, F: Float>(
                     expr: &Expr<T>,
                     fuzzy_compositions: &HashMap<(usize, VariableKey, VariableKey), Vec<F>>,
-                    conseqence_name: VariableKey,
+                    consequence_name: VariableKey,
                     and_op: AndOp,
                     or_op: OrOp,
                     rule_id: usize,
                 ) -> Vec<F> {
                     match expr {
-                        Expr::Is(var_key, _) => fuzzy_compositions[&(rule_id, *var_key, conseqence_name)].clone(),
+                        Expr::Is(var_key, _) => fuzzy_compositions[&(rule_id, *var_key, consequence_name)].clone(),
                         Expr::And(expr, expr2) => {
-                            let left = combine(expr, fuzzy_compositions, conseqence_name, and_op, or_op, rule_id);
-                            let right = combine(expr2, fuzzy_compositions, conseqence_name, and_op, or_op, rule_id);
+                            let left = combine(expr, fuzzy_compositions, consequence_name, and_op, or_op, rule_id);
+                            let right = combine(expr2, fuzzy_compositions, consequence_name, and_op, or_op, rule_id);
 
                             and_op.call(left, right).into_iter().collect()
                         },
                         Expr::Or(expr, expr2) => {
-                            let left = combine(expr, fuzzy_compositions, conseqence_name, and_op, or_op, rule_id);
-                            let right = combine(expr2, fuzzy_compositions, conseqence_name, and_op, or_op, rule_id);
+                            let left = combine(expr, fuzzy_compositions, consequence_name, and_op, or_op, rule_id);
+                            let right = combine(expr2, fuzzy_compositions, consequence_name, and_op, or_op, rule_id);
 
                             or_op.call(left, right).into_iter().collect()
                         },
@@ -204,13 +206,13 @@ impl DecompInference {
                 let combined_composition = combine(
                     &rule.premise,
                     &fuzzy_compositions,
-                    *conseqence_name,
+                    *consequence_name,
                     self.and_op,
                     self.or_op,
                     i,
                 );
 
-                combined_compositions.insert((i, *conseqence_name), combined_composition);
+                combined_compositions.insert((i, *consequence_name), combined_composition);
             }
         }
 
@@ -306,7 +308,7 @@ impl DecompInference {
         }
 
         // Defuzzificate
-        let mut defuzzificated_infered_memberships = HashMap::new();
+        let mut defuzzificated_inferred_memberships = HashMap::new();
 
         for (var_key, aggregated_membership) in aggregated_memberships {
             let var = &vars.0[var_key];
@@ -314,42 +316,42 @@ impl DecompInference {
             if aggregated_membership.iter().copied().sum::<f64>() == 0. {
                 let mean = var.universe.iter().copied().sum::<f64>() / var.universe.len() as f64;
 
-                defuzzificated_infered_memberships.insert(var_key, mean);
+                defuzzificated_inferred_memberships.insert(var_key, mean);
             } else {
                 let defuzzed = self.defuzz_op.call(&var.universe, &aggregated_membership);
 
-                defuzzificated_infered_memberships.insert(var_key, defuzzed);
+                defuzzificated_inferred_memberships.insert(var_key, defuzzed);
             }
         }
 
-        Outputs::new(defuzzificated_infered_memberships, final_inferred_cf)
+        Outputs::new(defuzzificated_inferred_memberships, final_inferred_cf)
     }
 }
 
 #[test]
 fn test_bank_loan() {
-    use crate::prelude::Term;
     use crate::terms::Terms;
+    use fixed_map::Key;
 
-    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Term)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, Key, Ord, PartialEq, PartialOrd)]
     enum Score {
         High,
         Low,
     }
 
-    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Term)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, Key, Ord, PartialEq, PartialOrd)]
     enum Ratio {
         Good,
         Bad,
     }
 
-    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Term)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, Key, Ord, PartialEq, PartialOrd)]
     enum Credit {
         Good,
         Bad,
     }
 
-    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Term)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, Key, Ord, PartialEq, PartialOrd)]
     enum Decision {
         Approve,
         Reject,
@@ -394,28 +396,16 @@ fn test_bank_loan() {
     let mut credit_terms = Terms::new();
     let mut decision_terms = Terms::new();
 
-    score_terms.insert(
-        Score::High,
-        &[(175.0f64, 0.0f64), (180., 0.2), (185., 0.7), (190., 1.)] as &[_],
-    );
+    score_terms.insert(Score::High, &[(175.0, 0.0), (180., 0.2), (185., 0.7), (190., 1.)]);
     score_terms.insert(
         Score::Low,
-        &[(155.0f64, 1.0f64), (160., 0.8), (165., 0.5), (170., 0.2), (175., 0.)],
+        &[(155.0, 1.0), (160., 0.8), (165., 0.5), (170., 0.2), (175., 0.)],
     );
-    ratio_terms.insert(
-        Ratio::Good,
-        &[(0.3f64, 1.0f64), (0.4, 0.7), (0.41, 0.3), (0.42, 0.)] as &[_],
-    );
+    ratio_terms.insert(Ratio::Good, &[(0.3, 1.0), (0.4, 0.7), (0.41, 0.3), (0.42, 0.)]);
     ratio_terms.insert(Ratio::Bad, &[(0.44, 0.), (0.45, 0.3), (0.5, 0.7), (0.7, 1.)]);
-    credit_terms.insert(
-        Credit::Good,
-        &[(2.0f64, 1.0f64), (3., 0.7), (4., 0.3), (5., 0.)] as &[_],
-    );
+    credit_terms.insert(Credit::Good, &[(2.0, 1.0), (3., 0.7), (4., 0.3), (5., 0.)]);
     credit_terms.insert(Credit::Bad, &[(5., 0.), (6., 0.3), (7., 0.7), (8., 1.)]);
-    decision_terms.insert(
-        Decision::Approve,
-        &[(5.0f64, 0.0f64), (6., 0.3), (7., 0.7), (8., 1.)] as &[_],
-    );
+    decision_terms.insert(Decision::Approve, &[(5.0, 0.0), (6., 0.3), (7., 0.7), (8., 1.)]);
     decision_terms.insert(Decision::Reject, &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)]);
 
     let mut vars = Variables::<VarTerms>::new();

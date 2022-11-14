@@ -14,7 +14,7 @@ pub mod prelude {
     pub use crate::ops::{AndOp, CompositionOp, DefuzzificationOp, ImplicationOp, OrOp, ProductionLink};
     pub use crate::outputs::Outputs;
     pub use crate::rules::Rules;
-    pub use crate::terms::{Term, Terms};
+    pub use crate::terms::Terms;
     pub use crate::variable::{Variable, VariableKey};
 }
 

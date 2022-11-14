@@ -8,6 +8,10 @@ impl<T> Rules<T> {
         Rules(Vec::new())
     }
 
+    pub fn with_capacity(capacity: usize) -> Self {
+        Rules(Vec::with_capacity(capacity))
+    }
+
     // REVIEW: Maybe consequence should be (Variable<I>, T) so we can manually
     // turn it into Expr::Is(VariableKey, T)?
     pub fn add(&mut self, premise: Expr<T>, consequence: Expr<T>) {
