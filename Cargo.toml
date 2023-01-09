@@ -3,6 +3,7 @@ name = "fuzzy-expert"
 version = "0.1.0"
 authors = ["Daniel Kolsoi <thadan64@gmail.com>"]
 description = "A fuzzy logic library with support for mamdani fuzzy inference."
+repository = "https://github.com/TheDan64/fuzzy-expert-rs"
 edition = "2021"
 readme = "README.md"
 keywords = ["fuzzy", "logic", "mamdani"]
