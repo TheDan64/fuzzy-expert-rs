@@ -32,16 +32,19 @@ impl<T: Eq + Hash> Variables<T> {
         Self(SlotMap::with_key())
     }
 
+    /// If the step value is not provided, it defaults to 0.1
     pub fn add<I: Into<T> + FixedKey + 'static>(
         &mut self,
         universe_range: RangeInclusive<f64>,
         terms: Terms<I>,
+        step: Option<f64>,
     ) -> Variable<I> {
         let start_term_coords = terms.0.iter().map(|(k, v)| (k.into(), *v));
         let key = self.0.insert(VariableContraints::new(
             universe_range,
             start_term_coords,
             terms.0.len(),
+            step.unwrap_or(0.1),
         ));
 
         Variable(key, PhantomData)
@@ -60,9 +63,8 @@ impl<T: Eq + Hash> VariableContraints<T> {
         universe_range: RangeInclusive<f64>,
         start_term_coords: impl IntoIterator<Item = (T, &'t [(f64, f64)])>,
         n_terms: usize,
+        step: f64,
     ) -> Self {
-        // TODO: This is an opt param in the original
-        let step = 0.1;
         let min_u = *universe_range.start();
         let max_u = *universe_range.end();
         // floor is closest approx to what python does for int() conversion. But at least one edgecase exists

@@ -409,10 +409,10 @@ fn test_bank_loan() {
     decision_terms.insert(Decision::Reject, &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)]);
 
     let mut vars = Variables::<VarTerms>::new();
-    let score = vars.add(150. ..=200., score_terms);
-    let ratio = vars.add(0.1..=1., ratio_terms);
-    let credit = vars.add(0. ..=10., credit_terms);
-    let decision = vars.add(0. ..=10., decision_terms);
+    let score = vars.add(150. ..=200., score_terms, None);
+    let ratio = vars.add(0.1..=1., ratio_terms, None);
+    let credit = vars.add(0. ..=10., credit_terms, None);
+    let decision = vars.add(0. ..=10., decision_terms, None);
     let mut rules = Rules::new();
 
     rules.add(
