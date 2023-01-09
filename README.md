@@ -1,5 +1,6 @@
 # fuzzy
 
+[![Crates.io](https://img.shields.io/crates/v/fuzzy-expert.svg?style=plastic)](https://crates.io/crates/fuzzy-expert)
 [![Build Status](https://github.com/TheDan64/fuzzy/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/TheDan64/fuzzy/actions/workflows/test.yml?query=branch%3Amain)
 [![lines of code](https://tokei.rs/b1/github/TheDan64/fuzzy)](https://github.com/Aaronepower/tokei)
 ![Minimum rustc 1.65](https://img.shields.io/badge/rustc-1.65+-brightgreen.svg)
