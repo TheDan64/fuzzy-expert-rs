@@ -1,9 +1,12 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::marker::PhantomData;
-use std::{hash::Hash, ops::RangeInclusive};
+use std::ops::RangeInclusive;
 
 use fixed_map::key::Key as FixedKey;
 use slotmap::{new_key_type, SlotMap};
+use thiserror::Error;
 
 use crate::linspace::Linspace;
 use crate::math::interp;
@@ -13,6 +16,10 @@ new_key_type! {
     /// A variable key
     pub struct VariableKey;
 }
+
+#[derive(Debug, Error)]
+#[error("Found an unsortable float value {0} or {1}")]
+pub struct UnsortableFloatsError(f64, f64);
 
 pub struct Variable<I>(pub(crate) VariableKey, PhantomData<I>);
 
@@ -38,19 +45,20 @@ impl<T: Eq + Hash> Variables<T> {
         universe_range: RangeInclusive<f64>,
         terms: Terms<I>,
         step: Option<f64>,
-    ) -> Variable<I> {
+    ) -> Result<Variable<I>, UnsortableFloatsError> {
         let start_term_coords = terms.0.iter().map(|(k, v)| (k.into(), *v));
         let key = self.0.insert(VariableContraints::new(
             universe_range,
             start_term_coords,
             terms.0.len(),
             step.unwrap_or(0.1),
-        ));
+        )?);
 
-        Variable(key, PhantomData)
+        Ok(Variable(key, PhantomData))
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct VariableContraints<T> {
     pub(crate) universe: Vec<f64>,
     pub(crate) min_u: f64,
@@ -64,7 +72,7 @@ impl<T: Eq + Hash> VariableContraints<T> {
         start_term_coords: impl IntoIterator<Item = (T, &'t [(f64, f64)])>,
         n_terms: usize,
         step: f64,
-    ) -> Self {
+    ) -> Result<Self, UnsortableFloatsError> {
         let min_u = *universe_range.start();
         let max_u = *universe_range.end();
         // floor is closest approx to what python does for int() conversion. But at least one edgecase exists
@@ -85,22 +93,36 @@ impl<T: Eq + Hash> VariableContraints<T> {
         } else {
             for (term, membership) in start_term_coords {
                 let xp = membership.iter().map(|(xp, _)| *xp);
-                this.add_points_to_universe(xp);
+                this.add_points_to_universe(xp)?;
                 this.terms
                     .insert(term, interp(this.universe.iter().copied(), membership.iter().copied()));
             }
         }
 
-        this
+        Ok(this)
     }
 
     // TODO: Try and make VariableContraints immutable?
-    pub(crate) fn add_points_to_universe(&mut self, points: impl IntoIterator<Item = f64>) {
+    pub(crate) fn add_points_to_universe(
+        &mut self,
+        points: impl IntoIterator<Item = f64>,
+    ) -> Result<(), UnsortableFloatsError> {
         // Adds new points to the universe
         let iter = points.into_iter().map(|p| p.clamp(self.min_u, self.max_u));
         let mut universe: Vec<_> = self.universe.iter().copied().chain(iter).collect();
 
-        universe.sort_unstable_by(|a, b| a.partial_cmp(b).expect("not to find unsortable floats"));
+        // If we fail to sort, we want to return an error rather than panic
+        let mut poisoned = Ok(());
+
+        universe.sort_unstable_by(|a, b| {
+            a.partial_cmp(b).unwrap_or_else(|| {
+                poisoned = Err(UnsortableFloatsError(*a, *b));
+                Ordering::Equal
+            })
+        });
+
+        poisoned?;
+
         universe.dedup();
 
         // Expand existent membership functions with the new points
@@ -115,6 +137,8 @@ impl<T: Eq + Hash> VariableContraints<T> {
 
         // Update the universe with the new points
         self.universe = universe;
+
+        Ok(())
     }
 
     #[allow(clippy::let_and_return)]

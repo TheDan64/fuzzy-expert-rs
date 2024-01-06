@@ -14,3 +14,7 @@ fixed-map = "0.8"
 itertools = "0.10"
 num = "0.4"
 slotmap = "1"
+thiserror = "1"
+
+[dev-dependencies]
+anyhow = "1"

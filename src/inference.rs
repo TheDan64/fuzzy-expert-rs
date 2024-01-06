@@ -41,7 +41,12 @@ impl DecompInference {
 
     // TODO: Maybe can make vars and rules immutable if they're just starting state
     // and everything else is calculated here
-    pub fn eval<T: Eq + Hash>(&self, vars: &mut Variables<T>, rules: &Rules<T>, inputs: &Inputs) -> Outputs {
+    pub fn eval<T: Eq + Hash + std::fmt::Debug>(
+        &self,
+        vars: &mut Variables<T>,
+        rules: &Rules<T>,
+        inputs: &Inputs,
+    ) -> Outputs {
         // Convert Inputs to facts
         // Converts input values to FIS facts
         let mut fact_value = HashMap::with_capacity(inputs.0.len());
@@ -253,15 +258,16 @@ impl DecompInference {
                 }
 
                 // REVIEW: Is this even necessary?
-                // if !collected_rule_memberships.contains_key(var_key) {
-                //     let universe = &vars.0[*var_key].universe;
-                //     let min = universe.iter().copied().reduce(f64::min).unwrap();
-                //     let max = universe.iter().copied().reduce(f64::max).unwrap();
-                //     let mut var = VariableContraints::<T>::new(min..=max, std::iter::empty());
-                //     var.universe = universe.clone();
+                if !collected_rule_memberships.contains_key(var_key) {
+                    //     let universe = &vars.0[*var_key].universe;
+                    //     let min = universe.iter().copied().reduce(f64::min).unwrap();
+                    //     let max = universe.iter().copied().reduce(f64::max).unwrap();
+                    //     let mut var = VariableContraints::<T>::new(min..=max, std::iter::empty());
+                    //     var.universe = universe.clone();
 
-                //     collected_rule_memberships.insert(*var_key, var);
-                // }
+                    //     collected_rule_memberships.insert(*var_key, var);
+                    // dbg!("got here", &vars.0[*var_key]);
+                }
 
                 if inferred_cf[&i] >= rule.threshold_cf {
                     collected_rule_memberships
@@ -329,7 +335,7 @@ impl DecompInference {
 }
 
 #[test]
-fn test_bank_loan() {
+fn test_bank_loan() -> anyhow::Result<()> {
     use crate::terms::Terms;
     use fixed_map::Key;
 
@@ -409,10 +415,10 @@ fn test_bank_loan() {
     decision_terms.insert(Decision::Reject, &[(2., 1.), (3., 0.7), (4., 0.3), (5., 0.)]);
 
     let mut vars = Variables::<VarTerms>::new();
-    let score = vars.add(150. ..=200., score_terms, None);
-    let ratio = vars.add(0.1..=1., ratio_terms, None);
-    let credit = vars.add(0. ..=10., credit_terms, None);
-    let decision = vars.add(0. ..=10., decision_terms, None);
+    let score = vars.add(150. ..=200., score_terms, None)?;
+    let ratio = vars.add(0.1..=1., ratio_terms, None)?;
+    let credit = vars.add(0. ..=10., credit_terms, None)?;
+    let decision = vars.add(0. ..=10., decision_terms, None)?;
     let mut rules = Rules::new();
 
     rules.add(
@@ -448,4 +454,6 @@ fn test_bank_loan() {
 
     assert_eq!(outputs.get_inferred_membership(decision), Some(8.010492631084489));
     assert_eq!(outputs.inferred_cf(), 1.);
+
+    Ok(())
 }
